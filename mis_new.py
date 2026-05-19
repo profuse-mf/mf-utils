@@ -362,8 +362,8 @@ if __name__ == "__main__":
     send_email_with_attachment(
         subject=f"Moneyfatafat Daily Report - {datetime.now().date()}",
         body="Attached is the daily business report.",
-        #to_emails=["anup.vaze@appkhichadi.com", "hiteshmittal@profuseservices.com","rishi.saraf@profuseservices.com"],
-        to_emails=["anup.vaze@appkhichadi.com"],
+        to_emails=["anup.vaze@appkhichadi.com", "hiteshmittal@profuseservices.com","rishi.saraf@profuseservices.com"],
+        #to_emails=["anup.vaze@appkhichadi.com"],
         file_path=pdf_file,
         from_email="anup.vaze@appkhichadi.com",
         smtp_host="smtp.gmail.com",

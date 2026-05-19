@@ -1,3 +1,4 @@
+import json
 import pymysql
 from datetime import date, timedelta
 from reportlab.lib.pagesizes import A4
@@ -77,6 +78,21 @@ def complete_user_ratio(complete_users, total_users):
     return round((complete_users * 100) / total_users, 2)
 
 
+def is_lead_sent(criteria_missed):
+    if criteria_missed is None:
+        return True
+    if isinstance(criteria_missed, str):
+        if not criteria_missed.strip():
+            return True
+        try:
+            criteria_missed = json.loads(criteria_missed)
+        except json.JSONDecodeError:
+            return False
+    if isinstance(criteria_missed, (list, tuple)):
+        return len(criteria_missed) == 0
+    return False
+
+
 def generate_report(output_path="moneyfatafat_daily_report.pdf"):
     yesterday = date.today() - timedelta(days=1)
 
@@ -150,6 +166,21 @@ def generate_report(output_path="moneyfatafat_daily_report.pdf"):
                 fta = 0
                 ra = yesterday_apps
 
+            lender_rows = fetch_all(cursor, """
+                SELECT lender.lender_name, logs.criteria_missed
+                FROM application_bre_logs AS logs
+                JOIN mf_lenders AS lender ON logs.lender_id = lender.id
+                WHERE application_id IN (
+                    SELECT id FROM application_master WHERE DATE(created_date) = %s
+                )
+            """, (yesterday,))
+
+            lender_leads = {}
+            for row in lender_rows:
+                name = row["lender_name"] or "Unknown"
+                if is_lead_sent(row["criteria_missed"]):
+                    lender_leads[name] = lender_leads.get(name, 0) + 1
+
     finally:
         conn.close()
 
@@ -218,8 +249,10 @@ def generate_report(output_path="moneyfatafat_daily_report.pdf"):
         subtitle_style
     ))
 
-    def make_table(data):
-        table = Table(data, colWidths=[285, 170], rowHeights=42)
+    def make_table(data, col_widths=None):
+        if col_widths is None:
+            col_widths = [285, 170]
+        table = Table(data, colWidths=col_widths, rowHeights=42)
 
         table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), BRAND_ORANGE),
@@ -276,6 +309,18 @@ def generate_report(output_path="moneyfatafat_daily_report.pdf"):
         ["RA - Repeat Applicant", ra],
     ]))
 
+    story.append(Spacer(1, 14))
+
+    lender_table_data = [["Lender Name", "Leads", "Percentage Dist"]]
+    for lender_name, leads in sorted(
+        lender_leads.items(), key=lambda item: item[1], reverse=True
+    ):
+        pct = complete_user_ratio(leads, yesterday_apps)
+        lender_table_data.append([lender_name, leads, f"{pct}%"])
+
+    story.append(Paragraph("Lenderwise Distribution", section_style))
+    story.append(make_table(lender_table_data, col_widths=[220, 115, 120]))
+
     story.append(Spacer(1, 28))
 
     story.append(Paragraph(
@@ -317,7 +362,8 @@ if __name__ == "__main__":
     send_email_with_attachment(
         subject=f"Moneyfatafat Daily Report - {datetime.now().date()}",
         body="Attached is the daily business report.",
-        to_emails=["anup.vaze@appkhichadi.com", "hiteshmittal@profuseservices.com","rishi.saraf@profuseservices.com"],
+        #to_emails=["anup.vaze@appkhichadi.com", "hiteshmittal@profuseservices.com","rishi.saraf@profuseservices.com"],
+        to_emails=["anup.vaze@appkhichadi.com"],
         file_path=pdf_file,
         from_email="anup.vaze@appkhichadi.com",
         smtp_host="smtp.gmail.com",

@@ -286,7 +286,9 @@ if __name__ == "__main__":
         subject=f"PolicyPilot Daily Report - {datetime.now().date()}",
         body="Attached is the PolicyPilot daily business report.",
         to_emails=[
-            "anup.vaze@appkhichadi.com"
+            "anup.vaze@appkhichadi.com",
+            "hiteshmittal@profuseservices.com",
+            "rishi.saraf@profuseservices.com",
         ],
         file_path=pdf_file,
         from_email="anup.vaze@appkhichadi.com",

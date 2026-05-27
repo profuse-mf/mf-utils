@@ -289,6 +289,7 @@ if __name__ == "__main__":
             "anup.vaze@appkhichadi.com",
             "hiteshmittal@profuseservices.com",
             "rishi.saraf@profuseservices.com",
+            "sravya@profuseservices.com"
         ],
         file_path=pdf_file,
         from_email="anup.vaze@appkhichadi.com",

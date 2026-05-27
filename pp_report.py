@@ -111,7 +111,7 @@ def generate_report(output_path="policypilot_daily_report.pdf"):
             new_acquisitions = fetch_one(cursor, """
                 SELECT COUNT(*) AS total
                 FROM pp_user
-                WHERE DATE(created) = %s
+                WHERE DATE(created_at) = %s
             """, (yesterday,))["total"]
 
             source_rows = fetch_all(cursor, """

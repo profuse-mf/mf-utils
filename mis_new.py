@@ -78,6 +78,19 @@ def complete_user_ratio(complete_users, total_users):
     return round((complete_users * 100) / total_users, 2)
 
 
+def normalize_utm_source(utm_source):
+    if utm_source is None:
+        return "organic"
+    if isinstance(utm_source, str):
+        normalized = utm_source.strip()
+        if not normalized or normalized.lower() == "null":
+            return "organic"
+        if normalized.lower() == "organic":
+            return "organic"
+        return normalized
+    return str(utm_source)
+
+
 def is_lead_sent(criteria_missed):
     if criteria_missed is None:
         return True
@@ -131,6 +144,24 @@ def generate_report(output_path="moneyfatafat_daily_report.pdf"):
             new_acquisitions = acq_map.get(0, 0) + acq_map.get(1, 0)
             complete_yesterday = acq_map.get(1, 0)
             acquisition_cr = complete_user_ratio(complete_yesterday, new_acquisitions)
+
+            utm_acq_rows = fetch_all(cursor, """
+                SELECT utm_source, COUNT(*) AS users, status
+                FROM mf_users
+                WHERE DATE(created_date) = %s
+                  AND status IN (0, 1)
+                GROUP BY utm_source, status
+            """, (yesterday,))
+
+            utm_acquisitions = {}
+            for row in utm_acq_rows:
+                source = normalize_utm_source(row["utm_source"])
+                if source not in utm_acquisitions:
+                    utm_acquisitions[source] = {"complete": 0, "partial": 0}
+                if row["status"] == 1:
+                    utm_acquisitions[source]["complete"] += row["users"]
+                else:
+                    utm_acquisitions[source]["partial"] += row["users"]
 
             first_user_row = fetch_one(cursor, """
                 SELECT id
@@ -298,6 +329,23 @@ def generate_report(output_path="moneyfatafat_daily_report.pdf"):
         ["Complete Users Yesterday", complete_yesterday],
         ["CR (Complete User Ratio)", f"{acquisition_cr}%"],
     ]))
+
+    story.append(Spacer(1, 14))
+
+    utm_table_data = [["UTM Source", "Complete Users", "Partial Users"]]
+    for source, counts in sorted(
+        utm_acquisitions.items(),
+        key=lambda item: item[1]["complete"] + item[1]["partial"],
+        reverse=True,
+    ):
+        utm_table_data.append([
+            source,
+            counts["complete"],
+            counts["partial"],
+        ])
+
+    story.append(Paragraph("UTM-Source wise Acquisitions", section_style))
+    story.append(make_table(utm_table_data, col_widths=[200, 127, 128]))
 
     story.append(Spacer(1, 14))
 

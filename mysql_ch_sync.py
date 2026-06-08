@@ -1,3 +1,5 @@
+import argparse
+import os
 import sys
 from datetime import datetime
 
@@ -9,11 +11,11 @@ MYSQL_DATABASE = "mf"
 MYSQL_USER = "profuse"
 MYSQL_PASSWORD = "tripleseven7"
 
-CLICKHOUSE_HOST = "localhost"
-CLICKHOUSE_PORT = 8123
-CLICKHOUSE_USER = "default"
-CLICKHOUSE_PASSWORD = ""
-CLICKHOUSE_DATABASE = "default"
+CLICKHOUSE_HOST = os.getenv("CLICKHOUSE_HOST", "172.31.9.40")
+CLICKHOUSE_PORT = int(os.getenv("CLICKHOUSE_PORT", "8123"))
+CLICKHOUSE_USER = os.getenv("CLICKHOUSE_USER", "default")
+CLICKHOUSE_PASSWORD = os.getenv("CLICKHOUSE_PASSWORD", "tripleseven7")
+CLICKHOUSE_DATABASE = os.getenv("CLICKHOUSE_DATABASE", "mf")
 
 
 def mysql_source(table_name):
@@ -218,14 +220,27 @@ FROM {mysql_source("mf_users")}
 ]
 
 
-def get_clickhouse_client():
+def get_clickhouse_client(host, port, user, password, database):
     return clickhouse_connect.get_client(
-        host=CLICKHOUSE_HOST,
-        port=CLICKHOUSE_PORT,
-        username=CLICKHOUSE_USER,
-        password=CLICKHOUSE_PASSWORD,
-        database=CLICKHOUSE_DATABASE,
+        host=host,
+        port=port,
+        username=user,
+        password=password,
+        database=database,
+        connect_timeout=30,
+        send_receive_timeout=3600,
     )
+
+
+def verify_clickhouse_connection(host, port, user, password, database):
+    print(
+        f"Connecting to ClickHouse at {host}:{port} "
+        f"(database={database}, user={user})..."
+    )
+    client = get_clickhouse_client(host, port, user, password, database)
+    client.command("SELECT 1")
+    print("ClickHouse connection OK")
+    return client
 
 
 def sync_table(client, table_name, insert_sql):
@@ -235,8 +250,32 @@ def sync_table(client, table_name, insert_sql):
     print(f"[{datetime.now().isoformat(timespec='seconds')}] Completed {table_name}")
 
 
-def run_sync():
-    client = get_clickhouse_client()
+def parse_args():
+    parser = argparse.ArgumentParser(description="Sync MySQL mf tables to ClickHouse")
+    parser.add_argument("--ch-host", default=CLICKHOUSE_HOST)
+    parser.add_argument("--ch-port", type=int, default=CLICKHOUSE_PORT)
+    parser.add_argument("--ch-user", default=CLICKHOUSE_USER)
+    parser.add_argument("--ch-password", default=CLICKHOUSE_PASSWORD)
+    parser.add_argument("--ch-database", default=CLICKHOUSE_DATABASE)
+    return parser.parse_args()
+
+
+def run_sync(host, port, user, password, database):
+    try:
+        client = verify_clickhouse_connection(host, port, user, password, database)
+    except Exception as exc:
+        print(
+            f"\nCould not connect to ClickHouse at {host}:{port}\n"
+            f"Error: {exc}\n\n"
+            "Checks:\n"
+            "  1. Is clickhouse-server running?\n"
+            "     sudo systemctl status clickhouse-server\n"
+            "  2. Does HTTP respond?\n"
+            f"     curl http://{host}:{port}/ping\n"
+            "  3. If ClickHouse is on another host, set CLICKHOUSE_HOST or use --ch-host\n",
+            file=sys.stderr,
+        )
+        raise
 
     for table_name, insert_sql in SYNC_TABLES:
         sync_table(client, table_name, insert_sql)
@@ -245,8 +284,15 @@ def run_sync():
 
 
 if __name__ == "__main__":
+    args = parse_args()
     try:
-        run_sync()
+        run_sync(
+            args.ch_host,
+            args.ch_port,
+            args.ch_user,
+            args.ch_password,
+            args.ch_database,
+        )
     except Exception as exc:
         print(f"Sync failed: {exc}", file=sys.stderr)
         sys.exit(1)

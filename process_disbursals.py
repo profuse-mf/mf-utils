@@ -48,7 +48,12 @@ DB_CONFIG = {
 }
 
 EMAIL_FROM = "anup.vaze@appkhichadi.com"
-EMAIL_TO = ["it_admin@profuseservices.com"]
+EMAIL_TO = [
+    "it_admin@profuseservices.com",
+    "hiteshmittal@profuseservices.com",
+    "rishi.saraf@profuseservices.com",
+    "sravya@profuseservices.com",
+]
 SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 587
 SMTP_USER = "anup.vaze@appkhichadi.com"
@@ -67,7 +72,7 @@ def explain_s3_error(exc):
             "This usually means the AWS access key is blocked or lacks S3 permissions.\n"
             "Actions:\n"
             "  1. Create a new IAM access key (the old mf user key may be quarantined by AWS)\n"
-            "  2. Ensure the IAM user can s3:ListBucket and s3:GetObject on:\n"
+            "  2. Ensure the IAM user can s3:ListBucket, s3:GetObject, and s3:DeleteObject on:\n"
             f"     arn:aws:s3:::{S3_BUCKET}\n"
             f"     arn:aws:s3:::{S3_BUCKET}/*\n"
             "  3. Export credentials and rerun:\n"
@@ -374,10 +379,20 @@ def download_all_files(s3_client, temp_dir):
     return downloaded_files
 
 
+def delete_processed_files_from_s3(s3_client, keys):
+    for key in keys:
+        print(f"Deleting {key} from s3://{S3_BUCKET}")
+        s3_client.delete_object(Bucket=S3_BUCKET, Key=key)
+
+    if keys:
+        print(f"Deleted {len(keys)} processed file(s) from S3")
+
+
 def process_disbursals():
     s3_client = get_s3_client()
     statuses_by_lender = {config["lender_id"]: set() for config in LENDER_CONFIGS}
     matched_files_by_lender = {config["lender_id"]: 0 for config in LENDER_CONFIGS}
+    processed_keys = []
 
     with tempfile.TemporaryDirectory() as temp_dir:
         downloaded_files = download_all_files(s3_client, temp_dir)
@@ -389,6 +404,7 @@ def process_disbursals():
 
             lender_id = config["lender_id"]
             matched_files_by_lender[lender_id] += 1
+            processed_keys.append(key)
             print(
                 f"Processing {key} "
                 f"(prefix={config['prefix']}, column={config['status_column']})"
@@ -431,6 +447,7 @@ def process_disbursals():
         return
 
     send_new_status_email(new_statuses_by_lender)
+    delete_processed_files_from_s3(s3_client, processed_keys)
 
 
 if __name__ == "__main__":

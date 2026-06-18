@@ -43,7 +43,8 @@ def fetch_stale_leads():
             id,
             lender_ref_id
         FROM lead_master
-        WHERE toDate(updated) < today() - {STALE_DAYS}
+        WHERE lender_id = 9
+          AND toDate(updated) < today() - {STALE_DAYS}
           AND lender_ref_id != ''
         ORDER BY id
     """

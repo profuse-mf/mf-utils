@@ -44,7 +44,7 @@ def fetch_stale_leads():
             lender_ref_id
         FROM lead_master
         WHERE lender_id = 9
-          AND toDate(updated) < today() - {STALE_DAYS}
+          AND toDate(updated) >= today() - {STALE_DAYS}
           AND lender_ref_id != ''
         ORDER BY id
     """
@@ -129,7 +129,7 @@ def update_lead_in_mysql(lead_id, disburse_status, disburse_amount, disburse_dat
 
 def process_mpokket_statuses():
     leads = fetch_stale_leads()
-    print(f"Found {len(leads)} lead(s) with updated date older than {STALE_DAYS} days")
+    print(f"Found {len(leads)} lead(s) updated in the last {STALE_DAYS} days")
 
     updated_count = 0
     skipped_count = 0

@@ -92,6 +92,7 @@ INSERT INTO lead_master
     application_id,
     user_id,
     lender_id,
+    lender_ref_id,
     api_name,
     api_status,
     stackcomplete,
@@ -99,13 +100,18 @@ INSERT INTO lead_master
     created_at,
     created,
     updated_at,
-    updated
+    updated,
+    disburse_status,
+    disburse_amount,
+    disburse_datetime,
+    disbursal_status_check
 )
 SELECT
     toUInt64(id),
     toUInt64(ifNull(application_id, 0)),
     toUInt64(ifNull(user_id, 0)),
     toUInt16(ifNull(lender_id, 0)),
+    ifNull(toString(lender_ref_id), ''),
     ifNull(api_name, ''),
     toUInt8(ifNull(api_status, 0)),
     toUInt8(ifNull(stackcomplete, 0)),
@@ -113,7 +119,11 @@ SELECT
     ifNull(created_at, now()),
     ifNull(created, today()),
     ifNull(updated_at, now()),
-    ifNull(updated, today())
+    ifNull(updated, today()),
+    ifNull(disburse_status, ''),
+    ifNull(toString(disburse_amount), ''),
+    ifNull(disburse_datetime, toDateTime('1970-01-01 00:00:00')),
+    ifNull(disbursal_status_check, toDateTime('1970-01-01 00:00:00'))
 FROM {mysql_source("lead_master")}
 """,
     ),

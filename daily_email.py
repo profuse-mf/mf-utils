@@ -1,11 +1,16 @@
-import json
 import os
 import sys
-import urllib.error
-import urllib.request
 
-NETCORE_API_URL = "https://emailapi.netcorecloud.net/v5/mail/send"
-NETCORE_API_KEY = os.getenv("NETCORE_API_KEY", "073cc1f4cc791557c0f58a70e9f65deb")
+from pepipost.exceptions.api_exception import APIException
+from pepipost.models.content import Content
+from pepipost.models.email_struct import EmailStruct
+from pepipost.models.mfrom import From
+from pepipost.models.personalizations import Personalizations
+from pepipost.models.send import Send
+from pepipost.models.type_enum import TypeEnum
+from pepipost.pepipost_client import PepipostClient
+
+PEPIPOST_API_KEY = os.getenv("PEPIPOST_API_KEY", "073cc1f4cc791557c0f58a70e9f65deb")
 
 FROM_EMAIL = "info@moneyfatafat.com"
 FROM_NAME = "MoneyFatafat"
@@ -56,72 +61,50 @@ def build_html_body(text_body):
         .replace(">", "&gt;")
     )
     html_content = escaped.replace("\n", "<br>\n")
-    return f"<html><body style='font-family: Arial, sans-serif; line-height: 1.6;'>{html_content}</body></html>"
-
-
-def build_payload(to_emails, subject, text_body):
-    return {
-        "from": {
-            "email": FROM_EMAIL,
-            "name": FROM_NAME,
-        },
-        "subject": subject,
-        "content": [
-            {
-                "type": "html",
-                "value": build_html_body(text_body),
-            },
-        ],
-        "personalizations": [
-            {
-                "to": [{"email": email} for email in to_emails],
-            }
-        ],
-    }
-
-
-def explain_netcore_error(status_code, error_body):
-    if status_code == 401:
-        return (
-            f"Netcore API error 401: {error_body}\n\n"
-            "The API key may be invalid or expired. Generate a new key in "
-            "Netcore CE dashboard → Settings → Integrations → API."
-        )
-    if status_code == 403 and "whitelist" in error_body.lower():
-        return (
-            f"Netcore API error 403: {error_body}\n\n"
-            "Your server IP must be whitelisted in Netcore:\n"
-            "  Settings → Integrations → API → edit your API key → add IP address"
-        )
-    return f"Netcore API error {status_code}: {error_body}"
-
-
-def send_email_via_netcore(to_emails, subject, text_body):
-    payload = build_payload(to_emails, subject, text_body)
-    request_data = json.dumps(payload).encode("utf-8")
-
-    request = urllib.request.Request(
-        NETCORE_API_URL,
-        data=request_data,
-        headers={
-            "content-type": "application/json",
-            "api_key": NETCORE_API_KEY,
-        },
-        method="POST",
+    return (
+        "<html><body style='font-family: Arial, sans-serif; line-height: 1.6;'>"
+        f"{html_content}</body></html>"
     )
 
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            response_body = response.read().decode("utf-8")
-            return json.loads(response_body) if response_body else {}
-    except urllib.error.HTTPError as exc:
-        error_body = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(explain_netcore_error(exc.code, error_body)) from exc
+
+def build_send_request(to_emails, subject, text_body):
+    body = Send()
+    body.mfrom = From()
+    body.mfrom.email = FROM_EMAIL
+    body.mfrom.name = FROM_NAME
+    body.subject = subject
+
+    body.content = [Content()]
+    body.content[0].mtype = TypeEnum.HTML
+    body.content[0].value = build_html_body(text_body)
+
+    personalization = Personalizations()
+    personalization.to = []
+    for email in to_emails:
+        recipient = EmailStruct()
+        recipient.email = email
+        recipient.name = email.split("@")[0]
+        personalization.to.append(recipient)
+
+    body.personalizations = [personalization]
+    body.tags = ["MoneyFatafat", "Welcome"]
+    return body
+
+
+def send_email_via_pepipost(to_emails, subject, text_body):
+    client = PepipostClient(PEPIPOST_API_KEY)
+    mail_send_controller = client.mail_send
+    body = build_send_request(to_emails, subject, text_body)
+    return mail_send_controller.create_generatethemailsendrequest(body)
 
 
 def send_welcome_email():
     print(f"Sending email to {', '.join(RECIPIENTS)}...")
-    result = send_email_via_netcore(RECIPIENTS, SUBJECT, EMAIL_BODY)
+    try:
+        result = send_email_via_pepipost(RECIPIENTS, SUBJECT, EMAIL_BODY)
+    except APIException as exc:
+        raise RuntimeError(f"Pepipost API error: {exc}") from exc
+
     print(f"Email sent successfully: {result}")
     return result
 

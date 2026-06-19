@@ -4,8 +4,8 @@ import sys
 import urllib.error
 import urllib.request
 
-NETCORE_API_URL = "https://emailapi.netcorecloud.net/v6/mail/send"
-NETCORE_API_KEY = os.getenv("NETCORE_API_KEY", "d20b3899e09af23bd5d4aa424e87e822")
+NETCORE_API_URL = "https://emailapi.netcorecloud.net/v5/mail/send"
+NETCORE_API_KEY = os.getenv("NETCORE_API_KEY", "073cc1f4cc791557c0f58a70e9f65deb")
 
 FROM_EMAIL = "info@moneyfatafat.com"
 FROM_NAME = "MoneyFatafat"
@@ -71,10 +71,6 @@ def build_payload(to_emails, subject, text_body):
                 "type": "html",
                 "value": build_html_body(text_body),
             },
-            {
-                "type": "plain",
-                "value": text_body,
-            },
         ],
         "personalizations": [
             {
@@ -108,8 +104,8 @@ def send_email_via_netcore(to_emails, subject, text_body):
         NETCORE_API_URL,
         data=request_data,
         headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {NETCORE_API_KEY}",
+            "content-type": "application/json",
+            "api_key": NETCORE_API_KEY,
         },
         method="POST",
     )

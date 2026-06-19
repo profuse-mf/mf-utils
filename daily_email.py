@@ -10,7 +10,7 @@ from pepipost.models.send import Send
 from pepipost.models.type_enum import TypeEnum
 from pepipost.pepipost_client import PepipostClient
 
-PEPIPOST_API_KEY = os.getenv("PEPIPOST_API_KEY", "073cc1f4cc791557c0f58a70e9f65deb")
+PEPIPOST_API_KEY = os.getenv("PEPIPOST_API_KEY", "d140257ef255e515a5872780ac2a4253")
 
 FROM_EMAIL = "info@moneyfatafat.com"
 FROM_NAME = "MoneyFatafat"

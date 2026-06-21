@@ -78,6 +78,15 @@ def complete_user_ratio(complete_users, total_users):
     return round((complete_users * 100) / total_users, 2)
 
 
+def acceptance_ratio(accepted, total_leads):
+    if not total_leads:
+        return 0
+    return round((accepted * 100) / total_leads, 2)
+
+
+LEAD_MASTER_LENDER_IDS = (4, 6, 9)
+
+
 def normalize_utm_source(utm_source):
     if utm_source is None:
         return "organic"
@@ -204,13 +213,36 @@ def generate_report(output_path="moneyfatafat_daily_report.pdf"):
                 WHERE application_id IN (
                     SELECT id FROM application_master WHERE DATE(created_date) = %s
                 )
-            """, (yesterday,))
+                  AND logs.lender_id NOT IN ({placeholders})
+            """.format(
+                placeholders=", ".join(["%s"] * len(LEAD_MASTER_LENDER_IDS))
+            ), (yesterday, *LEAD_MASTER_LENDER_IDS))
 
             lender_leads = {}
             for row in lender_rows:
                 name = row["lender_name"] or "Unknown"
                 if is_lead_sent(row["criteria_missed"]):
-                    lender_leads[name] = lender_leads.get(name, 0) + 1
+                    if name not in lender_leads:
+                        lender_leads[name] = {"leads": 0, "accepted": 0}
+                    lender_leads[name]["leads"] += 1
+
+            lead_master_placeholders = ", ".join(["%s"] * len(LEAD_MASTER_LENDER_IDS))
+            lead_master_rows = fetch_all(cursor, f"""
+                SELECT lender.lender_name, lm.status, COUNT(*) AS total
+                FROM lead_master AS lm
+                JOIN mf_lenders AS lender ON lm.lender_id = lender.id
+                WHERE lm.lender_id IN ({lead_master_placeholders})
+                  AND DATE(lm.created) = %s
+                GROUP BY lm.lender_id, lender.lender_name, lm.status
+            """, (*LEAD_MASTER_LENDER_IDS, yesterday))
+
+            for row in lead_master_rows:
+                name = row["lender_name"] or "Unknown"
+                if name not in lender_leads:
+                    lender_leads[name] = {"leads": 0, "accepted": 0}
+                lender_leads[name]["leads"] += row["total"]
+                if row["status"] == 1:
+                    lender_leads[name]["accepted"] += row["total"]
 
     finally:
         conn.close()
@@ -359,15 +391,29 @@ def generate_report(output_path="moneyfatafat_daily_report.pdf"):
 
     story.append(Spacer(1, 14))
 
-    lender_table_data = [["Lender Name", "Leads", "Percentage Dist"]]
-    for lender_name, leads in sorted(
-        lender_leads.items(), key=lambda item: item[1], reverse=True
+    lender_table_data = [
+        ["Lender Name", "Leads", "Accepted", "Percentage Dist", "Acceptance Ratio"]
+    ]
+    for lender_name, counts in sorted(
+        lender_leads.items(), key=lambda item: item[1]["leads"], reverse=True
     ):
+        leads = counts["leads"]
+        accepted = counts["accepted"]
         pct = complete_user_ratio(leads, yesterday_apps)
-        lender_table_data.append([lender_name, leads, f"{pct}%"])
+        acc_ratio = acceptance_ratio(accepted, leads)
+        lender_table_data.append([
+            lender_name,
+            leads,
+            accepted,
+            f"{pct}%",
+            f"{acc_ratio}%",
+        ])
 
     story.append(Paragraph("Lenderwise Distribution", section_style))
-    story.append(make_table(lender_table_data, col_widths=[220, 115, 120]))
+    story.append(make_table(
+        lender_table_data,
+        col_widths=[130, 55, 65, 95, 100],
+    ))
 
     story.append(Spacer(1, 28))
 

@@ -1,6 +1,8 @@
 import os
 import sys
+from datetime import datetime, timedelta
 
+import pymysql
 from pepipost.exceptions.api_exception import APIException
 from pepipost.models.content import Content
 from pepipost.models.email_struct import EmailStruct
@@ -16,9 +18,13 @@ FROM_EMAIL = "info@moneyfatafat.com"
 FROM_NAME = "MoneyFatafat"
 SUBJECT = "Welcome To Moneyfatafat"
 
-RECIPIENTS = [
-    "anup.vaze@gmail.com",
-]
+DB_CONFIG = {
+    "host": "172.31.41.11",
+    "user": "profuse",
+    "password": "tripleseven7",
+    "database": "mf",
+    "cursorclass": pymysql.cursors.DictCursor,
+}
 
 EMAIL_BODY = """Hello,
 
@@ -52,6 +58,44 @@ Let's get started!
 Warm regards,
 Team MoneyFatafat
 """
+
+
+def fetch_recent_complete_users():
+    conn = pymysql.connect(**DB_CONFIG)
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, email, created
+                FROM mf_users
+                WHERE status = 1
+                ORDER BY id DESC
+                LIMIT 100
+                """
+            )
+            return cursor.fetchall()
+    finally:
+        conn.close()
+
+
+def get_eligible_recipients(users):
+    cutoff = datetime.now() - timedelta(minutes=1)
+    recipients = []
+
+    for user in users:
+        email = (user.get("email") or "").strip()
+        created = user.get("created")
+
+        if not email or not created:
+            continue
+
+        if created >= cutoff:
+            recipients.append(email)
+            print(
+                f"Eligible user id={user['id']}, email={email}, created={created}"
+            )
+
+    return list(dict.fromkeys(recipients))
 
 
 def build_html_body(text_body):
@@ -98,20 +142,27 @@ def send_email_via_pepipost(to_emails, subject, text_body):
     return mail_send_controller.create_generatethemailsendrequest(body)
 
 
-def send_welcome_email():
-    print(f"Sending email to {', '.join(RECIPIENTS)}...")
+def send_welcome_emails():
+    users = fetch_recent_complete_users()
+    recipients = get_eligible_recipients(users)
+
+    if not recipients:
+        print("No complete users created in the last 1 minute. Email not sent.")
+        return []
+
+    print(f"Sending email to {', '.join(recipients)}...")
     try:
-        result = send_email_via_pepipost(RECIPIENTS, SUBJECT, EMAIL_BODY)
+        result = send_email_via_pepipost(recipients, SUBJECT, EMAIL_BODY)
     except APIException as exc:
         raise RuntimeError(f"Pepipost API error: {exc}") from exc
 
     print(f"Email sent successfully: {result}")
-    return result
+    return recipients
 
 
 if __name__ == "__main__":
     try:
-        send_welcome_email()
+        send_welcome_emails()
     except Exception as exc:
         print(f"Failed to send email: {exc}", file=sys.stderr)
         sys.exit(1)

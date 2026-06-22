@@ -141,14 +141,20 @@ def send_welcome_emails():
         print("No users with email found. Email not sent.")
         return []
 
-    print(f"Sending email to {', '.join(recipients)}...")
-    try:
-        result = send_email_via_pepipost(recipients, SUBJECT, EMAIL_BODY)
-    except APIException as exc:
-        raise RuntimeError(f"Pepipost API error: {exc}") from exc
+    sent_recipients = []
+    for recipient in recipients:
+        print(f"Sending email to {recipient}...")
+        try:
+            result = send_email_via_pepipost([recipient], SUBJECT, EMAIL_BODY)
+        except APIException as exc:
+            raise RuntimeError(
+                f"Pepipost API error for {recipient}: {exc}"
+            ) from exc
 
-    print(f"Email sent successfully: {result}")
-    return recipients
+        print(f"Email sent successfully to {recipient}: {result}")
+        sent_recipients.append(recipient)
+
+    return sent_recipients
 
 
 if __name__ == "__main__":

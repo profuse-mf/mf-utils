@@ -1,6 +1,5 @@
 import os
 import sys
-from datetime import datetime, timedelta
 
 import pymysql
 from pepipost.exceptions.api_exception import APIException
@@ -66,7 +65,7 @@ def fetch_all_users():
         with conn.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, email, created
+                SELECT id, email
                 FROM mf_users
                 ORDER BY id DESC
                 """
@@ -76,22 +75,16 @@ def fetch_all_users():
         conn.close()
 
 
-def get_eligible_recipients(users):
-    cutoff = datetime.now() - timedelta(minutes=1)
+def get_recipients(users):
     recipients = []
 
     for user in users:
         email = (user.get("email") or "").strip()
-        created = user.get("created")
-
-        if not email or not created:
+        if not email:
             continue
 
-        if created >= cutoff:
-            recipients.append(email)
-            print(
-                f"Eligible user id={user['id']}, email={email}, created={created}"
-            )
+        recipients.append(email)
+        print(f"Recipient user id={user['id']}, email={email}")
 
     return list(dict.fromkeys(recipients))
 
@@ -142,10 +135,10 @@ def send_email_via_pepipost(to_emails, subject, text_body):
 
 def send_welcome_emails():
     users = fetch_all_users()
-    recipients = get_eligible_recipients(users)
+    recipients = get_recipients(users)
 
     if not recipients:
-        print("No users created in the last 1 minute. Email not sent.")
+        print("No users with email found. Email not sent.")
         return []
 
     print(f"Sending email to {', '.join(recipients)}...")

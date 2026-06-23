@@ -191,7 +191,11 @@ INSERT INTO mf_users
     district,
     locality,
     current_exp,
-    salary_mode
+    salary_mode,
+    unemployment_status,
+    unemployment_reason,
+    has_current_income_or_support,
+    current_income_source
 )
 SELECT
     toUInt32(id),
@@ -223,7 +227,11 @@ SELECT
     ifNull(district, ''),
     ifNull(locality, ''),
     ifNull(current_exp, ''),
-    toInt16(ifNull(salary_mode, 0))
+    toInt16(ifNull(salary_mode, 0)),
+    ifNull(toString(unemployment_status), ''),
+    ifNull(unemployment_reason, ''),
+    toUInt8(ifNull(has_current_income_or_support, 0)),
+    ifNull(current_income_source, '')
 FROM {mysql_source("mf_users")}
 """,
     ),

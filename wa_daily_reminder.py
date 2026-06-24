@@ -2,23 +2,13 @@ import pymysql
 import requests
 import logging
 import time
-from dotenv import load_dotenv
-import os 
 
-# Load .env file
-load_dotenv()
+from config import WA_API_KEY, WA_API_URL, WA_TEMPLATE_ID, db_config
 
-DB_CONFIG = {
-    "host": os.getenv("DB_HOST"),
-    "user": os.getenv("DB_USER"),
-    "password": os.getenv("DB_PASSWORD"),
-    "database": os.getenv("DB_NAME"),
-    "cursorclass": pymysql.cursors.DictCursor,
-    "autocommit": False
-}
-
-API_URL = os.getenv("API_URL")
-API_KEY = os.getenv("API_KEY")
+DB_CONFIG = db_config(autocommit=False)
+API_URL = WA_API_URL
+API_KEY = WA_API_KEY
+TEMPLATE_ID = WA_TEMPLATE_ID
 
 # ----------------------------------------
 
@@ -30,14 +20,14 @@ FROM mf_users
 WHERE status = 0
   AND created_date = CURDATE() - INTERVAL 1 DAY;
 """
-templateid = "2195811521243183" 
+templateid = TEMPLATE_ID 
 
 def send_message(name, phone):
     if not name or name.strip() == "":
         name = "User"
 
     payload = {
-        "template": "2195811521243183",
+        "template": TEMPLATE_ID,
         "phone": str(phone).replace("+", ""),
         "message": {
             "placeholders": [name],

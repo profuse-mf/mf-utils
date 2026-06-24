@@ -4,18 +4,23 @@ from datetime import date
 import boto3
 import pymysql
 
-DB_HOST = "172.31.41.11"
-DB_USER = "profuse"
-DB_PASSWORD = "tripleseven7"
+from config import (
+    AWS_ACCESS_KEY_ID,
+    AWS_REGION,
+    AWS_SECRET_ACCESS_KEY,
+    DB_HOST,
+    DB_NAME,
+    DB_PASSWORD,
+    DB_USER,
+    PP_DB_NAME,
+    S3_BUCKET_SCHEMA_BACKUPS,
+)
 
-S3_BUCKET = "schema-backups-811822680314-ap-south-1-an"
-AWS_ACCESS_KEY = "AKIA32BDHBD5AKKRPZX4"
-AWS_SECRET_KEY = "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"
-AWS_REGION = "ap-south-1"
+S3_BUCKET = S3_BUCKET_SCHEMA_BACKUPS
 
 DATABASES = {
-    "mf": "mf",
-    "pp": "policy_pilot",
+    "mf": DB_NAME,
+    "pp": PP_DB_NAME,
 }
 
 MF_FULL_DATA_TABLES = {
@@ -140,8 +145,8 @@ def s3_object_key(db_key, filename):
 def upload_to_s3(db_key, file_path):
     s3_client = boto3.client(
         "s3",
-        aws_access_key_id=AWS_ACCESS_KEY,
-        aws_secret_access_key=AWS_SECRET_KEY,
+        aws_access_key_id=AWS_ACCESS_KEY_ID,
+        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
         region_name=AWS_REGION,
     )
     key = s3_object_key(db_key, os.path.basename(file_path))

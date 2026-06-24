@@ -3,27 +3,22 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
-from datetime import datetime
 
 import clickhouse_connect
 import pymysql
 
-CLICKHOUSE_HOST = "172.31.9.40"
-CLICKHOUSE_PORT = 8123
-CLICKHOUSE_USER = "default"
-CLICKHOUSE_PASSWORD = "tripleseven7"
-CLICKHOUSE_DATABASE = "mf"
+from config import (
+    CLICKHOUSE_DATABASE,
+    CLICKHOUSE_HOST,
+    CLICKHOUSE_PASSWORD,
+    CLICKHOUSE_PORT,
+    CLICKHOUSE_USER,
+    MPOKKET_API_BASE,
+    MPOKKET_API_KEY,
+    db_config,
+)
 
-MYSQL_CONFIG = {
-    "host": "172.31.41.11",
-    "user": "profuse",
-    "password": "tripleseven7",
-    "database": "mf",
-    "cursorclass": pymysql.cursors.DictCursor,
-}
-
-MPOKKET_API_BASE = "https://api.mpkt.in/acquisition-affiliate/v1/user"
-MPOKKET_API_KEY = "FEC0BF5EEB8B481CA9BD267307C53"
+MYSQL_CONFIG = db_config()
 STALE_DAYS = 15
 
 

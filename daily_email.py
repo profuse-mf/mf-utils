@@ -1,4 +1,3 @@
-import os
 import sys
 from datetime import datetime, timedelta
 
@@ -12,19 +11,13 @@ from pepipost.models.send import Send
 from pepipost.models.type_enum import TypeEnum
 from pepipost.pepipost_client import PepipostClient
 
-PEPIPOST_API_KEY = os.getenv("PEPIPOST_API_KEY", "d140257ef255e515a5872780ac2a4253")
+from config import PEPIPOST_API_KEY, PEPIPOST_FROM_EMAIL, PEPIPOST_FROM_NAME, db_config
 
-FROM_EMAIL = "info@moneyfatafat.com"
-FROM_NAME = "MoneyFatafat"
+FROM_EMAIL = PEPIPOST_FROM_EMAIL
+FROM_NAME = PEPIPOST_FROM_NAME
 SUBJECT = "Welcome To Moneyfatafat"
 
-DB_CONFIG = {
-    "host": "172.31.41.11",
-    "user": "profuse",
-    "password": "tripleseven7",
-    "database": "mf",
-    "cursorclass": pymysql.cursors.DictCursor,
-}
+DB_CONFIG = db_config()
 
 EMAIL_BODY = """Hello,
 

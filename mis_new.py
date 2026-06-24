@@ -1,21 +1,25 @@
 import json
 import pymysql
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 import smtplib
 from email.message import EmailMessage
-from datetime import datetime
 
-DB_CONFIG = {
-    "host": "172.31.41.11",
-    "user": "profuse",
-    "password": "tripleseven7",
-    "database": "mf",
-    "cursorclass": pymysql.cursors.DictCursor
-}
+from config import (
+    MF_REPORT_EMAIL_TO,
+    MF_REPORT_PDF_PATH,
+    SMTP_FROM,
+    SMTP_HOST,
+    SMTP_PASSWORD,
+    SMTP_PORT,
+    SMTP_USER,
+    db_config,
+)
+
+DB_CONFIG = db_config()
 
 
 BRAND_ORANGE = colors.HexColor("#f59e0b")
@@ -449,19 +453,18 @@ def generate_report(output_path="moneyfatafat_daily_report.pdf"):
 if __name__ == "__main__":
     generate_report()
 
-    pdf_file = "/var/moneyfatafat_daily_report.pdf"
+    pdf_file = MF_REPORT_PDF_PATH
 
     generate_report(pdf_file)
 
     send_email_with_attachment(
         subject=f"Moneyfatafat Daily Report - {datetime.now().date()}",
         body="Attached is the daily business report.",
-        to_emails=["anup.vaze@appkhichadi.com", "hiteshmittal@profuseservices.com","rishi.saraf@profuseservices.com", "sravya@profuseservices.com", "rakshithpola@profuseservices.com"],
-        #to_emails=["anup.vaze@appkhichadi.com"],
+        to_emails=MF_REPORT_EMAIL_TO,
         file_path=pdf_file,
-        from_email="anup.vaze@appkhichadi.com",
-        smtp_host="smtp.gmail.com",
-        smtp_port=587,
-        smtp_user="anup.vaze@appkhichadi.com",
-        smtp_password="qjqn sbpr yvso seiq"
+        from_email=SMTP_FROM,
+        smtp_host=SMTP_HOST,
+        smtp_port=SMTP_PORT,
+        smtp_user=SMTP_USER,
+        smtp_password=SMTP_PASSWORD,
     )

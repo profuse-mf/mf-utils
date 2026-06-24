@@ -11,10 +11,24 @@ from pathlib import Path
 import boto3
 import pymysql
 
-S3_BUCKET = "mf-lender-reports-811822680314-ap-south-1-an"
-AWS_ACCESS_KEY = "AKIA32BDHBD5AKKRPZX4"
-AWS_SECRET_KEY = "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"
-AWS_REGION = "ap-south-1"
+from config import (
+    AWS_ACCESS_KEY_ID,
+    AWS_REGION,
+    AWS_SECRET_ACCESS_KEY,
+    DISBURSAL_ALERT_EMAIL_TO,
+    S3_BUCKET_LENDER_REPORTS,
+    SMTP_FROM,
+    SMTP_HOST,
+    SMTP_PASSWORD,
+    SMTP_PORT,
+    SMTP_USER,
+    db_config,
+)
+
+S3_BUCKET = S3_BUCKET_LENDER_REPORTS
+DB_CONFIG = db_config()
+EMAIL_FROM = SMTP_FROM
+EMAIL_TO = DISBURSAL_ALERT_EMAIL_TO
 
 LENDER_CONFIGS = [
     {
@@ -38,27 +52,6 @@ LENDER_CONFIGS = [
         "lender_id": 7,
     },
 ]
-
-DB_CONFIG = {
-    "host": "172.31.41.11",
-    "user": "profuse",
-    "password": "tripleseven7",
-    "database": "mf",
-    "cursorclass": pymysql.cursors.DictCursor,
-}
-
-EMAIL_FROM = "anup.vaze@appkhichadi.com"
-EMAIL_TO = [
-    "it_admin@profuseservices.com",
-    "hiteshmittal@profuseservices.com",
-    "rishi.saraf@profuseservices.com",
-    "sravya@profuseservices.com",
-]
-SMTP_HOST = "smtp.gmail.com"
-SMTP_PORT = 587
-SMTP_USER = "anup.vaze@appkhichadi.com"
-SMTP_PASSWORD = "qjqn sbpr yvso seiq"
-
 
 def lender_config_by_id():
     return {config["lender_id"]: config for config in LENDER_CONFIGS}
@@ -84,12 +77,7 @@ def explain_s3_error(exc):
 
 
 def get_aws_credentials():
-    access_key = os.getenv("AWS_ACCESS_KEY_ID") or os.getenv("AWS_ACCESS_KEY") or AWS_ACCESS_KEY
-    secret_key = (
-        os.getenv("AWS_SECRET_ACCESS_KEY") or os.getenv("AWS_SECRET_KEY") or AWS_SECRET_KEY
-    )
-    region = os.getenv("AWS_REGION") or AWS_REGION
-    return access_key, secret_key, region
+    return AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION
 
 
 def get_s3_client():

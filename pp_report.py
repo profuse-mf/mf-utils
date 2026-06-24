@@ -16,13 +16,19 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 import smtplib
 from email.message import EmailMessage
 
-DB_CONFIG = {
-    "host": "172.31.41.11",
-    "user": "profuse",
-    "password": "tripleseven7",
-    "database": "policy_pilot",
-    "cursorclass": pymysql.cursors.DictCursor,
-}
+from config import (
+    PP_DB_NAME,
+    PP_REPORT_EMAIL_TO,
+    PP_REPORT_PDF_PATH,
+    SMTP_FROM,
+    SMTP_HOST,
+    SMTP_PASSWORD,
+    SMTP_PORT,
+    SMTP_USER,
+    db_config,
+)
+
+DB_CONFIG = db_config(database=PP_DB_NAME)
 
 LOGO_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)),
@@ -278,24 +284,18 @@ def generate_report(output_path="policypilot_daily_report.pdf"):
 
 
 if __name__ == "__main__":
-    pdf_file = "/var/policypilot_daily_report.pdf"
+    pdf_file = PP_REPORT_PDF_PATH
 
     generate_report(pdf_file)
 
     send_email_with_attachment(
         subject=f"PolicyPilot Daily Report - {datetime.now().date()}",
         body="Attached is the PolicyPilot daily business report.",
-        to_emails=[
-            "anup.vaze@appkhichadi.com",
-            "hiteshmittal@profuseservices.com",
-            "rishi.saraf@profuseservices.com",
-            "sravya@profuseservices.com",
-            "rakshithpola@profuseservices.com",
-        ],
+        to_emails=PP_REPORT_EMAIL_TO,
         file_path=pdf_file,
-        from_email="anup.vaze@appkhichadi.com",
-        smtp_host="smtp.gmail.com",
-        smtp_port=587,
-        smtp_user="anup.vaze@appkhichadi.com",
-        smtp_password="qjqn sbpr yvso seiq",
+        from_email=SMTP_FROM,
+        smtp_host=SMTP_HOST,
+        smtp_port=SMTP_PORT,
+        smtp_user=SMTP_USER,
+        smtp_password=SMTP_PASSWORD,
     )

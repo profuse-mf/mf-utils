@@ -1,21 +1,26 @@
 import argparse
-import os
 import sys
 from datetime import datetime
 
 import clickhouse_connect
 
-MYSQL_HOST = "172.31.41.11"
-MYSQL_PORT = 3306
-MYSQL_DATABASE = "mf"
-MYSQL_USER = "profuse"
-MYSQL_PASSWORD = "tripleseven7"
+from config import (
+    CLICKHOUSE_DATABASE,
+    CLICKHOUSE_HOST,
+    CLICKHOUSE_PASSWORD,
+    CLICKHOUSE_PORT,
+    CLICKHOUSE_USER,
+    DB_HOST,
+    DB_NAME,
+    DB_PASSWORD,
+    DB_USER,
+    MYSQL_PORT,
+)
 
-CLICKHOUSE_HOST = os.getenv("CLICKHOUSE_HOST", "172.31.9.40")
-CLICKHOUSE_PORT = int(os.getenv("CLICKHOUSE_PORT", "8123"))
-CLICKHOUSE_USER = os.getenv("CLICKHOUSE_USER", "default")
-CLICKHOUSE_PASSWORD = os.getenv("CLICKHOUSE_PASSWORD", "tripleseven7")
-CLICKHOUSE_DATABASE = os.getenv("CLICKHOUSE_DATABASE", "mf")
+MYSQL_HOST = DB_HOST
+MYSQL_DATABASE = DB_NAME
+MYSQL_USER = DB_USER
+MYSQL_PASSWORD = DB_PASSWORD
 
 
 def mysql_source(table_name):

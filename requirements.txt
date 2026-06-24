@@ -1,4 +1,10 @@
 pepipost
+python-dotenv
+pymysql
+boto3
+clickhouse-connect
+openpyxl
+reportlab
 requests>=2.20.0
 jsonpickle>=0.7.1
 cachecontrol>=0.11.7

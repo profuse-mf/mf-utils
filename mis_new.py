@@ -88,9 +88,6 @@ def acceptance_ratio(accepted, total_leads):
     return round((accepted * 100) / total_leads, 2)
 
 
-LEAD_MASTER_LENDER_IDS = (4, 6, 9)
-
-
 def normalize_utm_source(utm_source):
     if utm_source is None:
         return "organic"
@@ -217,10 +214,8 @@ def generate_report(output_path="moneyfatafat_daily_report.pdf"):
                 WHERE application_id IN (
                     SELECT id FROM application_master WHERE DATE(created_date) = %s
                 )
-                  AND logs.lender_id NOT IN ({placeholders})
-            """.format(
-                placeholders=", ".join(["%s"] * len(LEAD_MASTER_LENDER_IDS))
-            ), (yesterday, *LEAD_MASTER_LENDER_IDS))
+                  AND lender.lender_type != 1
+            """, (yesterday,))
 
             lender_leads = {}
             for row in lender_rows:
@@ -230,15 +225,17 @@ def generate_report(output_path="moneyfatafat_daily_report.pdf"):
                         lender_leads[name] = {"leads": 0, "accepted": 0}
                     lender_leads[name]["leads"] += 1
 
-            lead_master_placeholders = ", ".join(["%s"] * len(LEAD_MASTER_LENDER_IDS))
-            lead_master_rows = fetch_all(cursor, f"""
+            lead_master_rows = fetch_all(cursor, """
                 SELECT lender.lender_name, lm.status, COUNT(*) AS total
                 FROM lead_master AS lm
                 JOIN mf_lenders AS lender ON lm.lender_id = lender.id
-                WHERE lm.lender_id IN ({lead_master_placeholders})
-                  AND DATE(lm.created) = %s
+                WHERE lender.lender_type = 1
+                  AND lm.application_id IN (
+                      SELECT id FROM application_master
+                      WHERE DATE(created_date) = %s
+                  )
                 GROUP BY lm.lender_id, lender.lender_name, lm.status
-            """, (*LEAD_MASTER_LENDER_IDS, yesterday))
+            """, (yesterday,))
 
             for row in lead_master_rows:
                 name = row["lender_name"] or "Unknown"

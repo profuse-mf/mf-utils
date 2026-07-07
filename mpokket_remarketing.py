@@ -82,12 +82,13 @@ def send_message(name, phone, url):
 
 
 def main():
-    require_wa_config(
-        api_url=MPOKKET_WA_API_URL,
-        api_key=MPOKKET_WA_API_KEY,
-        platform=MPOKKET_WA_PLATFORM,
-        require_platform=True,
-    )
+    require_wa_config(api_url=MPOKKET_WA_API_URL, api_key=MPOKKET_WA_API_KEY)
+    if not MPOKKET_WA_PLATFORM:
+        logging.warning(
+            "MPOKKET_WA_PLATFORM not set — if Whistle returns error 1353, "
+            "add the platform ID for template %s in .env",
+            TEMPLATE_ID,
+        )
     connection = None
 
     try:

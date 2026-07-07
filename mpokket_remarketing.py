@@ -5,11 +5,9 @@ import pymysql
 import requests
 
 from config import (
-    MPOKKET_WA_API_KEY,
-    MPOKKET_WA_API_URL,
-    MPOKKET_WA_PLATFORM,
     MPOKKET_WA_TEMPLATE_ID,
     db_config,
+    mpokket_wa_settings,
     require_wa_config,
 )
 
@@ -48,7 +46,7 @@ def format_name(name):
     return " ".join(word.capitalize() for word in str(name).strip().split())
 
 
-def send_message(name, phone, url):
+def send_message(name, phone, url, api_url, api_key, platform):
     payload = {
         "template": TEMPLATE_ID,
         "phone": str(phone).replace("+", ""),
@@ -56,25 +54,35 @@ def send_message(name, phone, url):
             "placeholders": [name, url],
         },
     }
-    if MPOKKET_WA_PLATFORM:
-        payload["platform"] = MPOKKET_WA_PLATFORM
+    if platform:
+        payload["platform"] = platform
 
     headers = {
-        "api_key": MPOKKET_WA_API_KEY,
+        "api_key": api_key,
         "Content-Type": "application/json",
     }
 
     try:
-        response = requests.post(
-            MPOKKET_WA_API_URL, json=payload, headers=headers, timeout=10
+        response = requests.post(api_url, json=payload, headers=headers, timeout=10)
+        body = response.json() if response.text else {}
+        if response.status_code == 200 and body.get("status") in (True, "true", "success"):
+            return True
+
+        logging.error(
+            "Failed → %s | %s | %s | payload=%s",
+            phone,
+            response.status_code,
+            response.text,
+            {**payload, "platform": platform or "(not set)"},
         )
-        if response.status_code == 200:
-            body = response.json() if response.text else {}
-            if body.get("status") in (True, "true", "success"):
-                return True
-            logging.error(f"Failed → {phone} | {response.status_code} | {response.text}")
-            return False
-        logging.error(f"Failed → {phone} | {response.status_code} | {response.text}")
+        if body.get("code") == "1353":
+            logging.error(
+                "Whistle error 1353: template %s is not on the WABA tied to this API key. "
+                "Set MPOKKET_WA_PLATFORM in .env (from Whistle dashboard), or set "
+                "MPOKKET_WA_USE_MF_CREDENTIALS=1 to use Moneyfatafat WA_API_KEY if the "
+                "template was created there. Contact Whistle/Ananta support if unsure.",
+                TEMPLATE_ID,
+            )
         return False
     except Exception as exc:
         logging.error(f"Exception → {phone} | {exc}")
@@ -82,11 +90,12 @@ def send_message(name, phone, url):
 
 
 def main():
-    require_wa_config(api_url=MPOKKET_WA_API_URL, api_key=MPOKKET_WA_API_KEY)
-    if not MPOKKET_WA_PLATFORM:
+    api_url, api_key, platform = mpokket_wa_settings()
+    require_wa_config(api_url=api_url, api_key=api_key)
+    if not platform:
         logging.warning(
-            "MPOKKET_WA_PLATFORM not set — if Whistle returns error 1353, "
-            "add the platform ID for template %s in .env",
+            "WhatsApp platform not set (MPOKKET_WA_PLATFORM or WA_PLATFORM). "
+            "Whistle will likely return error 1353 for template %s.",
             TEMPLATE_ID,
         )
     connection = None
@@ -114,7 +123,7 @@ def main():
                     f"name={name}, mobile={phone}"
                 )
 
-                success = send_message(name, phone, TRACKIER_URL)
+                success = send_message(name, phone, TRACKIER_URL, api_url, api_key, platform)
 
                 if success:
                     try:

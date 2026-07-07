@@ -61,14 +61,27 @@ WA_API_KEY = _env("WA_API_KEY") or _env("API_KEY")
 WA_TEMPLATE_ID = _env("WA_TEMPLATE_ID")
 WA_PLATFORM = _env("WA_PLATFORM")
 
-# Whistle/Ananta: MPokket remarketing may use a different platform/WABA
+# Whistle/Ananta (utilsapi.smsmsg.in): MPokket remarketing WABA
 MPOKKET_WA_API_URL = _env("MPOKKET_WA_API_URL") or WA_API_URL
 MPOKKET_WA_API_KEY = _env("MPOKKET_WA_API_KEY") or WA_API_KEY
-MPOKKET_WA_PLATFORM = _env("MPOKKET_WA_PLATFORM") or WA_PLATFORM
+# Platform ID is WABA-specific — do not fall back to WA_PLATFORM
+MPOKKET_WA_PLATFORM = _env("MPOKKET_WA_PLATFORM")
 MPOKKET_WA_TEMPLATE_ID = _env(
     "MPOKKET_WA_TEMPLATE_ID",
     "1341052670909718",
 )
+# Set to 1 to send via Moneyfatafat WA_API_KEY (if template lives on that WABA)
+MPOKKET_WA_USE_MF_CREDENTIALS = _env("MPOKKET_WA_USE_MF_CREDENTIALS", "").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
+
+def mpokket_wa_settings():
+    if MPOKKET_WA_USE_MF_CREDENTIALS:
+        return WA_API_URL, WA_API_KEY, WA_PLATFORM
+    return MPOKKET_WA_API_URL, MPOKKET_WA_API_KEY, MPOKKET_WA_PLATFORM
 
 
 def require_wa_config(api_url=None, api_key=None, platform=None, require_platform=False):

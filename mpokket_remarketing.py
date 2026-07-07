@@ -47,9 +47,6 @@ def send_message(name, phone, url):
         "phone": str(phone).replace("+", ""),
         "message": {
             "placeholders": [name, url],
-            "button": {
-                "url": url,
-            },
         },
     }
 

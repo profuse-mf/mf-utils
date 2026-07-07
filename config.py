@@ -55,9 +55,22 @@ MPOKKET_API_BASE = _env(
     "https://api.mpkt.in/acquisition-affiliate/v1/user",
 )
 
-WA_API_URL = _env("WA_API_URL")
-WA_API_KEY = _env("WA_API_KEY")
+# Legacy wa_reminder scripts used API_URL / API_KEY in .env
+WA_API_URL = _env("WA_API_URL") or _env("API_URL")
+WA_API_KEY = _env("WA_API_KEY") or _env("API_KEY")
 WA_TEMPLATE_ID = _env("WA_TEMPLATE_ID")
+
+
+def require_wa_config():
+    missing = []
+    if not WA_API_URL:
+        missing.append("WA_API_URL (or legacy API_URL)")
+    if not WA_API_KEY:
+        missing.append("WA_API_KEY (or legacy API_KEY)")
+    if missing:
+        raise RuntimeError(
+            "WhatsApp API not configured. Set in .env: " + ", ".join(missing)
+        )
 
 MF_REPORT_EMAIL_TO = _env_list("MF_REPORT_EMAIL_TO")
 PP_REPORT_EMAIL_TO = _env_list("PP_REPORT_EMAIL_TO")

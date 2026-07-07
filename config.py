@@ -59,14 +59,26 @@ MPOKKET_API_BASE = _env(
 WA_API_URL = _env("WA_API_URL") or _env("API_URL")
 WA_API_KEY = _env("WA_API_KEY") or _env("API_KEY")
 WA_TEMPLATE_ID = _env("WA_TEMPLATE_ID")
+WA_PLATFORM = _env("WA_PLATFORM")
+
+# Whistle/Ananta: MPokket remarketing may use a different platform/WABA
+MPOKKET_WA_API_URL = _env("MPOKKET_WA_API_URL") or WA_API_URL
+MPOKKET_WA_API_KEY = _env("MPOKKET_WA_API_KEY") or WA_API_KEY
+MPOKKET_WA_PLATFORM = _env("MPOKKET_WA_PLATFORM") or WA_PLATFORM
+MPOKKET_WA_TEMPLATE_ID = _env(
+    "MPOKKET_WA_TEMPLATE_ID",
+    "1341052670909718",
+)
 
 
-def require_wa_config():
+def require_wa_config(api_url=None, api_key=None, platform=None, require_platform=False):
     missing = []
-    if not WA_API_URL:
+    if not (api_url or WA_API_URL):
         missing.append("WA_API_URL (or legacy API_URL)")
-    if not WA_API_KEY:
+    if not (api_key or WA_API_KEY):
         missing.append("WA_API_KEY (or legacy API_KEY)")
+    if require_platform and not platform:
+        missing.append("MPOKKET_WA_PLATFORM (or WA_PLATFORM)")
     if missing:
         raise RuntimeError(
             "WhatsApp API not configured. Set in .env: " + ", ".join(missing)

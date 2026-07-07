@@ -4,12 +4,19 @@ import time
 import pymysql
 import requests
 
-from config import WA_API_KEY, WA_API_URL, db_config, require_wa_config
+from config import (
+    MPOKKET_WA_API_KEY,
+    MPOKKET_WA_API_URL,
+    MPOKKET_WA_PLATFORM,
+    MPOKKET_WA_TEMPLATE_ID,
+    db_config,
+    require_wa_config,
+)
 
 DB_CONFIG = db_config(autocommit=False)
 
 MPOKKET_LENDER_ID = 9
-TEMPLATE_ID = "1341052670909718"
+TEMPLATE_ID = MPOKKET_WA_TEMPLATE_ID
 TRACKIER_URL = "https://profuse.gotrackier.com/click?campaign_id=221&pub_id=218"
 HARDCODED_MOBILE = "8867188207"
 LEAD_LIMIT = 5
@@ -49,16 +56,24 @@ def send_message(name, phone, url):
             "placeholders": [name, url],
         },
     }
+    if MPOKKET_WA_PLATFORM:
+        payload["platform"] = MPOKKET_WA_PLATFORM
 
     headers = {
-        "api_key": WA_API_KEY,
+        "api_key": MPOKKET_WA_API_KEY,
         "Content-Type": "application/json",
     }
 
     try:
-        response = requests.post(WA_API_URL, json=payload, headers=headers, timeout=10)
+        response = requests.post(
+            MPOKKET_WA_API_URL, json=payload, headers=headers, timeout=10
+        )
         if response.status_code == 200:
-            return True
+            body = response.json() if response.text else {}
+            if body.get("status") in (True, "true", "success"):
+                return True
+            logging.error(f"Failed → {phone} | {response.status_code} | {response.text}")
+            return False
         logging.error(f"Failed → {phone} | {response.status_code} | {response.text}")
         return False
     except Exception as exc:
@@ -67,7 +82,12 @@ def send_message(name, phone, url):
 
 
 def main():
-    require_wa_config()
+    require_wa_config(
+        api_url=MPOKKET_WA_API_URL,
+        api_key=MPOKKET_WA_API_KEY,
+        platform=MPOKKET_WA_PLATFORM,
+        require_platform=True,
+    )
     connection = None
 
     try:

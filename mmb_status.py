@@ -1,5 +1,6 @@
 import json
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -168,6 +169,8 @@ def process_mmb_statuses():
         except Exception as exc:
             failed_count += 1
             print(f"  Failed: {exc}", file=sys.stderr)
+
+        time.sleep(1)
 
     print()
     print(

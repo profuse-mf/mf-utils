@@ -55,6 +55,19 @@ MPOKKET_API_BASE = _env(
     "https://api.mpkt.in/acquisition-affiliate/v1/user",
 )
 
+MMB_API_KEY = _env(
+    "MMB_API_KEY",
+    "39e8e411-4ed4-4808-9745-8eca43943f7e",
+)
+MMB_MERCHANT_ID = _env(
+    "MMB_MERCHANT_ID",
+    "39e8e411-4ed4-4808-9745-8eca43943f7e",
+)
+MMB_API_URL = _env(
+    "MMB_API_URL",
+    "https://mm-app-backend.mymoneybazaar.com/api/merchant/lead_details/",
+)
+
 # Legacy wa_reminder scripts used API_URL / API_KEY in .env
 WA_API_URL = _env("WA_API_URL") or _env("API_URL")
 WA_API_KEY = _env("WA_API_KEY") or _env("API_KEY")

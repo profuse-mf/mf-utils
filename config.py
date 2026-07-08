@@ -57,7 +57,7 @@ MPOKKET_API_BASE = _env(
 
 MMB_API_KEY = _env(
     "MMB_API_KEY",
-    "39e8e411-4ed4-4808-9745-8eca43943f7e",
+    "3a6210cc-e98e-446b-995f-c700d23c699f",
 )
 MMB_MERCHANT_ID = _env(
     "MMB_MERCHANT_ID",

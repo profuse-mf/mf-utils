@@ -61,7 +61,7 @@ MMB_API_KEY = _env(
 )
 MMB_MERCHANT_ID = _env(
     "MMB_MERCHANT_ID",
-    "39e8e411-4ed4-4808-9745-8eca43943f7e",
+    "069d367f-8eda-4e4e-a911-de4ef38963a8",
 )
 MMB_API_URL = _env(
     "MMB_API_URL",

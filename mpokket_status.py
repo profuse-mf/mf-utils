@@ -41,6 +41,11 @@ def fetch_stale_leads():
         WHERE lender_id = 9
           AND toDate(updated) >= today() - {STALE_DAYS}
           AND lender_ref_id != ''
+          AND ifNull(disburse_status, '') NOT IN (
+              'Rejected On Request',
+              'Rejected',
+              'Disbursed'
+          )
         ORDER BY id
     """
     client = get_clickhouse_client()

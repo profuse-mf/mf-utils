@@ -99,8 +99,10 @@ RAMFINCORP_CLIENT_ID = (
     or "Profuse_946b90c15d5d39f23633263e1bf2d4e9"
 )
 RAMFINCORP_UTM_SOURCE = _env("RAMFINCORP_UTM_SOURCE", "Profuse")
-# Status API.pdf: application/jose. Set RAMFINCORP_USE_JOSE=0 to send plain JSON.
-RAMFINCORP_USE_JOSE = _env("RAMFINCORP_USE_JOSE", "1").lower() in ("1", "true", "yes")
+# Status API.pdf sample cURL uses application/json on this endpoint.
+# Prod /customers/check_ongoing_status accepts JSON + Basic; JOSE was returning 401.
+# Set RAMFINCORP_USE_JOSE=1 only if the lender requires application/jose.
+RAMFINCORP_USE_JOSE = _env("RAMFINCORP_USE_JOSE", "0").lower() in ("1", "true", "yes")
 RAMFINCORP_PUBLIC_PEM_PATH = _env("RAMFINCORP_PUBLIC_PEM_PATH")
 # Prod EC P-256 server public key (override via RAM_FINCORP_PUBLIC_KEY_PEM)
 RAMFINCORP_DEFAULT_PUBLIC_KEY_PEM = """-----BEGIN PUBLIC KEY-----
@@ -108,9 +110,15 @@ MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAElSiKv/y6LQtPDP4yosH3ppftoRiY
 P3kmgVZ5nYamFlY0NnFpPhndXJ1KFWkygJvtgS+nPeOLZsjulXSDSSKTLA==
 -----END PUBLIC KEY-----"""
 _raw_pem = _env("RAM_FINCORP_PUBLIC_KEY_PEM") or _env("RAMFINCORP_PUBLIC_KEY_PEM")
-RAMFINCORP_PUBLIC_KEY_PEM = (
-    _raw_pem.replace("\\n", "\n") if _raw_pem else RAMFINCORP_DEFAULT_PUBLIC_KEY_PEM
-)
+if _raw_pem:
+    _raw_pem = _raw_pem.strip()
+    if (_raw_pem.startswith('"') and _raw_pem.endswith('"')) or (
+        _raw_pem.startswith("'") and _raw_pem.endswith("'")
+    ):
+        _raw_pem = _raw_pem[1:-1]
+    RAMFINCORP_PUBLIC_KEY_PEM = _raw_pem.replace("\\n", "\n")
+else:
+    RAMFINCORP_PUBLIC_KEY_PEM = RAMFINCORP_DEFAULT_PUBLIC_KEY_PEM
 RAMFINCORP_JWE_TTL_SEC = int(
     _env("RAM_FINCORP_JWE_TTL_SEC") or _env("RAMFINCORP_JWE_TTL_SEC") or "300"
 )

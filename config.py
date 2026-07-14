@@ -68,6 +68,53 @@ MMB_API_URL = _env(
     "https://mm-app-backend.mymoneybazaar.com/api/merchant/lead_details/",
 )
 
+# Ram Fincorp Status API (aligns with mf-api RAM_FINCORP_* env names)
+RAMFINCORP_BASE_URL = (
+    _env("RAM_FINCORP_BASE_URL")
+    or _env("RAMFINCORP_BASE_URL")
+    or "https://loans-api.ramfincorp.com"
+).rstrip("/")
+RAMFINCORP_STATUS_PATH = _env(
+    "RAMFINCORP_STATUS_PATH",
+    "/customers/check_ongoing_status",
+)
+RAMFINCORP_STATUS_API_URL = _env("RAMFINCORP_STATUS_API_URL") or (
+    f"{RAMFINCORP_BASE_URL}{RAMFINCORP_STATUS_PATH}"
+)
+RAMFINCORP_BASIC_AUTH_TOKEN = _env("RAM_FINCORP_BASIC_AUTH_TOKEN") or _env(
+    "RAMFINCORP_BASIC_AUTH_TOKEN",
+    "UHJvZnVzZV85NDZiOTBjMTVkNWQzOWYyMzYzMzI2M2UxYmYyZDRlOToyNDhiZTM3OTNlMTU1ODg4YWI3ZDMzY2MyZWYzNzUzYTA2MTBjOTY2",
+)
+RAMFINCORP_BASIC_USER = _env(
+    "RAMFINCORP_BASIC_USER",
+    "Profuse_946b90c15d5d39f23633263e1bf2d4e9",
+)
+RAMFINCORP_BASIC_PASSWORD = _env(
+    "RAMFINCORP_BASIC_PASSWORD",
+    "248be3793e155888ab7d33cc2ef3753a0610c966",
+)
+RAMFINCORP_CLIENT_ID = (
+    _env("RAM_FINCORP_CLIENT_ID")
+    or _env("RAMFINCORP_CLIENT_ID")
+    or "Profuse_946b90c15d5d39f23633263e1bf2d4e9"
+)
+RAMFINCORP_UTM_SOURCE = _env("RAMFINCORP_UTM_SOURCE", "Profuse")
+# Status API.pdf: application/jose. Set RAMFINCORP_USE_JOSE=0 to send plain JSON.
+RAMFINCORP_USE_JOSE = _env("RAMFINCORP_USE_JOSE", "1").lower() in ("1", "true", "yes")
+RAMFINCORP_PUBLIC_PEM_PATH = _env("RAMFINCORP_PUBLIC_PEM_PATH")
+# Prod EC P-256 server public key (override via RAM_FINCORP_PUBLIC_KEY_PEM)
+RAMFINCORP_DEFAULT_PUBLIC_KEY_PEM = """-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAElSiKv/y6LQtPDP4yosH3ppftoRiY
+P3kmgVZ5nYamFlY0NnFpPhndXJ1KFWkygJvtgS+nPeOLZsjulXSDSSKTLA==
+-----END PUBLIC KEY-----"""
+_raw_pem = _env("RAM_FINCORP_PUBLIC_KEY_PEM") or _env("RAMFINCORP_PUBLIC_KEY_PEM")
+RAMFINCORP_PUBLIC_KEY_PEM = (
+    _raw_pem.replace("\\n", "\n") if _raw_pem else RAMFINCORP_DEFAULT_PUBLIC_KEY_PEM
+)
+RAMFINCORP_JWE_TTL_SEC = int(
+    _env("RAM_FINCORP_JWE_TTL_SEC") or _env("RAMFINCORP_JWE_TTL_SEC") or "300"
+)
+
 # Legacy wa_reminder scripts used API_URL / API_KEY in .env
 WA_API_URL = _env("WA_API_URL") or _env("API_URL")
 WA_API_KEY = _env("WA_API_KEY") or _env("API_KEY")

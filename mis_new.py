@@ -460,10 +460,7 @@ def generate_report(output_path="moneyfatafat_daily_report.pdf"):
 
     story.append(Spacer(1, 14))
 
-    disbursal_table_data = [
-        ["Lender Name", "Leads", "Approvals", "Disbursed"]
-    ]
-    for lender_name, counts in sorted(
+    disbursal_rows_data = sorted(
         (
             (name, data)
             for name, data in disbursals.items()
@@ -471,19 +468,38 @@ def generate_report(output_path="moneyfatafat_daily_report.pdf"):
         ),
         key=lambda item: item[1]["disbursed"],
         reverse=True,
-    ):
-        disbursal_table_data.append([
-            lender_name,
-            counts["leads"],
-            counts["approvals"],
-            counts["disbursed"],
-        ])
+    )
 
     story.append(Paragraph("Disbursals", section_style))
-    story.append(make_table(
-        disbursal_table_data,
-        col_widths=[190, 80, 90, 90],
-    ))
+    if disbursal_rows_data:
+        disbursal_table_data = [
+            ["Lender Name", "Leads", "Approvals", "Disbursed"]
+        ]
+        for lender_name, counts in disbursal_rows_data:
+            disbursal_table_data.append([
+                lender_name,
+                counts["leads"],
+                counts["approvals"],
+                counts["disbursed"],
+            ])
+        story.append(make_table(
+            disbursal_table_data,
+            col_widths=[190, 80, 90, 90],
+        ))
+    else:
+        empty_style = ParagraphStyle(
+            "EmptyDisbursalsStyle",
+            parent=styles["Normal"],
+            textColor=MUTED,
+            fontName="Helvetica",
+            fontSize=10.5,
+            leading=14,
+            leftIndent=4,
+        )
+        story.append(Paragraph(
+            "No disbursals recorded for this date.",
+            empty_style,
+        ))
 
     story.append(Spacer(1, 28))
 

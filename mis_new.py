@@ -245,6 +245,37 @@ def generate_report(output_path="moneyfatafat_daily_report.pdf"):
                 if row["status"] == 1:
                     lender_leads[name]["accepted"] += row["total"]
 
+            disbursal_rows = fetch_all(cursor, """
+                SELECT
+                    lender.lender_name,
+                    COUNT(*) AS leads,
+                    SUM(CASE WHEN lm.status = 1 THEN 1 ELSE 0 END) AS approvals,
+                    SUM(
+                        CASE
+                            WHEN LOWER(IFNULL(lm.disburse_status, '')) IN (
+                                'disbursed', 'success'
+                            ) THEN 1
+                            ELSE 0
+                        END
+                    ) AS disbursed
+                FROM lead_master AS lm
+                JOIN mf_lenders AS lender ON lm.lender_id = lender.id
+                WHERE lm.application_id IN (
+                    SELECT id FROM application_master
+                    WHERE DATE(created_date) = %s
+                )
+                GROUP BY lm.lender_id, lender.lender_name
+            """, (yesterday,))
+
+            disbursals = {}
+            for row in disbursal_rows:
+                name = row["lender_name"] or "Unknown"
+                disbursals[name] = {
+                    "leads": int(row["leads"] or 0),
+                    "approvals": int(row["approvals"] or 0),
+                    "disbursed": int(row["disbursed"] or 0),
+                }
+
     finally:
         conn.close()
 
@@ -414,6 +445,27 @@ def generate_report(output_path="moneyfatafat_daily_report.pdf"):
     story.append(make_table(
         lender_table_data,
         col_widths=[130, 55, 65, 95, 100],
+    ))
+
+    story.append(Spacer(1, 14))
+
+    disbursal_table_data = [
+        ["Lender Name", "Leads", "Approvals", "Disbursed"]
+    ]
+    for lender_name, counts in sorted(
+        disbursals.items(), key=lambda item: item[1]["leads"], reverse=True
+    ):
+        disbursal_table_data.append([
+            lender_name,
+            counts["leads"],
+            counts["approvals"],
+            counts["disbursed"],
+        ])
+
+    story.append(Paragraph("Disbursals", section_style))
+    story.append(make_table(
+        disbursal_table_data,
+        col_widths=[190, 80, 90, 90],
     ))
 
     story.append(Spacer(1, 28))

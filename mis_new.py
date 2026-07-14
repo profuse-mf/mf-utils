@@ -248,7 +248,6 @@ def generate_report(output_path="moneyfatafat_daily_report.pdf"):
             disbursal_rows = fetch_all(cursor, """
                 SELECT
                     lender.lender_name,
-                    COUNT(*) AS leads,
                     SUM(CASE WHEN lm.status = 1 THEN 1 ELSE 0 END) AS approvals,
                     SUM(
                         CASE
@@ -267,14 +266,26 @@ def generate_report(output_path="moneyfatafat_daily_report.pdf"):
                 GROUP BY lm.lender_id, lender.lender_name
             """, (yesterday,))
 
-            disbursals = {}
+            # Start from Distribution leads so both tables stay aligned
+            # (BRE-sent leads for UTM lenders + lead_master for API lenders).
+            disbursals = {
+                name: {
+                    "leads": counts["leads"],
+                    "approvals": 0,
+                    "disbursed": 0,
+                }
+                for name, counts in lender_leads.items()
+            }
             for row in disbursal_rows:
                 name = row["lender_name"] or "Unknown"
-                disbursals[name] = {
-                    "leads": int(row["leads"] or 0),
-                    "approvals": int(row["approvals"] or 0),
-                    "disbursed": int(row["disbursed"] or 0),
-                }
+                if name not in disbursals:
+                    disbursals[name] = {
+                        "leads": 0,
+                        "approvals": 0,
+                        "disbursed": 0,
+                    }
+                disbursals[name]["approvals"] += int(row["approvals"] or 0)
+                disbursals[name]["disbursed"] += int(row["disbursed"] or 0)
 
     finally:
         conn.close()

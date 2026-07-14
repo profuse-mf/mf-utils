@@ -464,7 +464,13 @@ def generate_report(output_path="moneyfatafat_daily_report.pdf"):
         ["Lender Name", "Leads", "Approvals", "Disbursed"]
     ]
     for lender_name, counts in sorted(
-        disbursals.items(), key=lambda item: item[1]["leads"], reverse=True
+        (
+            (name, data)
+            for name, data in disbursals.items()
+            if data["disbursed"] >= 1
+        ),
+        key=lambda item: item[1]["disbursed"],
+        reverse=True,
     ):
         disbursal_table_data.append([
             lender_name,

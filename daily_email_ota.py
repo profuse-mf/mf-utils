@@ -1,6 +1,5 @@
 import sys
 
-import pymysql
 from pepipost.exceptions.api_exception import APIException
 from pepipost.models.content import Content
 from pepipost.models.email_struct import EmailStruct
@@ -10,13 +9,18 @@ from pepipost.models.send import Send
 from pepipost.models.type_enum import TypeEnum
 from pepipost.pepipost_client import PepipostClient
 
-from config import PEPIPOST_API_KEY, PEPIPOST_FROM_EMAIL, PEPIPOST_FROM_NAME, db_config
+from config import PEPIPOST_API_KEY, PEPIPOST_FROM_EMAIL, PEPIPOST_FROM_NAME
 
 FROM_EMAIL = PEPIPOST_FROM_EMAIL
 FROM_NAME = PEPIPOST_FROM_NAME
 SUBJECT = "Welcome To Moneyfatafat"
 
-DB_CONFIG = db_config()
+RECIPIENTS = [
+    "nksystem2019@gmail.com",
+    "vinodnetcore@gmail.com",
+    "imtiyaz.netcore@gmail.com",
+    "testh903@gmail.com",
+]
 
 EMAIL_BODY = """Hello,
 
@@ -50,36 +54,6 @@ Let's get started!
 Warm regards,
 Team MoneyFatafat
 """
-
-
-def fetch_all_users():
-    conn = pymysql.connect(**DB_CONFIG)
-    try:
-        with conn.cursor() as cursor:
-            cursor.execute(
-                """
-                SELECT id, email
-                FROM mf_users
-                ORDER BY id DESC
-                """
-            )
-            return cursor.fetchall()
-    finally:
-        conn.close()
-
-
-def get_recipients(users):
-    recipients = []
-
-    for user in users:
-        email = (user.get("email") or "").strip()
-        if not email:
-            continue
-
-        recipients.append(email)
-        print(f"Recipient user id={user['id']}, email={email}")
-
-    return list(dict.fromkeys(recipients))
 
 
 def build_html_body(text_body):
@@ -127,15 +101,8 @@ def send_email_via_pepipost(to_emails, subject, text_body):
 
 
 def send_welcome_emails():
-    users = fetch_all_users()
-    recipients = get_recipients(users)
-
-    if not recipients:
-        print("No users with email found. Email not sent.")
-        return []
-
     sent_recipients = []
-    for recipient in recipients:
+    for recipient in RECIPIENTS:
         print(f"Sending email to {recipient}...")
         try:
             result = send_email_via_pepipost([recipient], SUBJECT, EMAIL_BODY)

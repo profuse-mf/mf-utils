@@ -27,6 +27,7 @@ from config import (
     CLICKHOUSE_PASSWORD,
     CLICKHOUSE_PORT,
     CLICKHOUSE_USER,
+    MF_REPORT_EMAIL_TO,
     SMTP_FROM,
     SMTP_HOST,
     SMTP_PASSWORD,
@@ -39,7 +40,18 @@ MYSQL_CONFIG = db_config()
 LOOKBACK_DAYS = 21
 LENDER_TYPE_API = 1
 LENDER_TYPE_UTM = 2
-REPORT_EMAIL_TO = ["anup.vaze@appkhichadi.com"]
+
+
+def report_email_recipients():
+    """Same recipients as mis_new.py, with anup.vaze replaced by anup@profuseservices.com."""
+    recipients = []
+    for email in MF_REPORT_EMAIL_TO:
+        if email.strip().lower() == "anup.vaze@appkhichadi.com":
+            recipients.append("anup@profuseservices.com")
+        else:
+            recipients.append(email)
+    # Preserve order, drop duplicates
+    return list(dict.fromkeys(recipients))
 
 
 def send_email(
@@ -254,14 +266,20 @@ def send_report_email(rows):
             "(same as mis_new.py)"
         )
 
+    to_emails = report_email_recipients()
+    if not to_emails:
+        raise RuntimeError(
+            "No report recipients configured. Set MF_REPORT_EMAIL_TO in .env"
+        )
+
     print(
         f"Sending report email via {SMTP_HOST}:{SMTP_PORT} "
-        f"as {SMTP_USER} → {', '.join(REPORT_EMAIL_TO)}"
+        f"as {SMTP_USER} → {', '.join(to_emails)}"
     )
     send_email(
         subject=f"Lender Redirect Analysis - {datetime.now().date()}",
         body=build_text_report(rows),
-        to_emails=REPORT_EMAIL_TO,
+        to_emails=to_emails,
         from_email=SMTP_FROM,
         smtp_host=SMTP_HOST,
         smtp_port=SMTP_PORT,
@@ -269,7 +287,7 @@ def send_report_email(rows):
         smtp_password=SMTP_PASSWORD,
         html_body=build_html_report(rows),
     )
-    print(f"Report email sent to {', '.join(REPORT_EMAIL_TO)}")
+    print(f"Report email sent to {', '.join(to_emails)}")
 
 
 def analyse_lender_redirections():

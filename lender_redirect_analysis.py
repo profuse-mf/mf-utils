@@ -5,7 +5,7 @@ UTM lenders (lender_type=2):
   B = mf_lender_rediections_stats in MySQL for that lender
 
 API lenders (lender_type=1):
-  A = lead_master in MySQL with status=1 for that lender
+  A = lead_master in MySQL with status=1 for that lender, last 21 days
   B = mf_lender_rediections_stats in MySQL for that lender
 
 Successful redirections = |A ∩ B|
@@ -69,7 +69,7 @@ def fetch_utm_eligible_application_ids(ch_client, lender_id):
 
 
 def fetch_api_eligible_application_ids(mysql_conn, lender_id):
-    """Eligible API apps: lead_master.status = 1 for this lender."""
+    """Eligible API apps: lead_master.status = 1 within LOOKBACK_DAYS."""
     with mysql_conn.cursor() as cursor:
         cursor.execute(
             """
@@ -79,8 +79,9 @@ def fetch_api_eligible_application_ids(mysql_conn, lender_id):
               AND status = 1
               AND application_id IS NOT NULL
               AND application_id != 0
+              AND created >= NOW() - INTERVAL %s DAY
             """,
-            (lender_id,),
+            (lender_id, LOOKBACK_DAYS),
         )
         return {int(row["application_id"]) for row in cursor.fetchall()}
 
@@ -159,10 +160,10 @@ def analyse_lender_redirections():
         lenders = fetch_lenders(mysql_conn)
         print(f"Loaded {len(lenders)} lender(s) from mf_lenders")
         print(
-            f"UTM eligibility window: last {LOOKBACK_DAYS} days "
-            f"(application_bre_logs.created)"
+            f"Eligibility window: last {LOOKBACK_DAYS} days "
+            f"(UTM: application_bre_logs.created, API: lead_master.created)"
         )
-        print("API eligibility: lead_master.status = 1")
+        print("API eligibility also requires lead_master.status = 1")
         print()
 
         for lender in lenders:

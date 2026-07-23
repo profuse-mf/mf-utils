@@ -15,7 +15,7 @@ Success % = |A ∩ B| / |A| * 100
 import html
 import smtplib
 import sys
-from datetime import date
+from datetime import date, datetime
 from email.message import EmailMessage
 
 import clickhouse_connect
@@ -40,6 +40,32 @@ LOOKBACK_DAYS = 21
 LENDER_TYPE_API = 1
 LENDER_TYPE_UTM = 2
 REPORT_EMAIL_TO = ["anup.vaze@appkhichadi.com"]
+
+
+def send_email(
+    subject,
+    body,
+    to_emails,
+    from_email,
+    smtp_host,
+    smtp_port,
+    smtp_user,
+    smtp_password,
+    html_body=None,
+):
+    """Same SMTP flow as mis_new.py (without attachment)."""
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = from_email
+    msg["To"] = ", ".join(to_emails)
+    msg.set_content(body)
+    if html_body:
+        msg.add_alternative(html_body, subtype="html")
+
+    with smtplib.SMTP(smtp_host, smtp_port) as server:
+        server.starttls()
+        server.login(smtp_user, smtp_password)
+        server.send_message(msg)
 
 
 def get_clickhouse_client():
@@ -224,25 +250,25 @@ def build_html_report(rows):
 def send_report_email(rows):
     if not SMTP_USER or not SMTP_PASSWORD:
         raise RuntimeError(
-            "SMTP is not configured. Set SMTP_USER and SMTP_PASSWORD in .env"
+            "SMTP is not configured. Set SMTP_USER and SMTP_PASSWORD in .env "
+            "(same as mis_new.py)"
         )
 
-    subject = f"Lender Redirect Analysis - {date.today()}"
-    text_body = build_text_report(rows)
-    html_body = build_html_report(rows)
-
-    msg = EmailMessage()
-    msg["Subject"] = subject
-    msg["From"] = SMTP_FROM
-    msg["To"] = ", ".join(REPORT_EMAIL_TO)
-    msg.set_content(text_body)
-    msg.add_alternative(html_body, subtype="html")
-
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-        server.starttls()
-        server.login(SMTP_USER, SMTP_PASSWORD)
-        server.send_message(msg)
-
+    print(
+        f"Sending report email via {SMTP_HOST}:{SMTP_PORT} "
+        f"as {SMTP_USER} → {', '.join(REPORT_EMAIL_TO)}"
+    )
+    send_email(
+        subject=f"Lender Redirect Analysis - {datetime.now().date()}",
+        body=build_text_report(rows),
+        to_emails=REPORT_EMAIL_TO,
+        from_email=SMTP_FROM,
+        smtp_host=SMTP_HOST,
+        smtp_port=SMTP_PORT,
+        smtp_user=SMTP_USER,
+        smtp_password=SMTP_PASSWORD,
+        html_body=build_html_report(rows),
+    )
     print(f"Report email sent to {', '.join(REPORT_EMAIL_TO)}")
 
 

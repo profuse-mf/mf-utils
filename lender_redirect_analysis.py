@@ -12,7 +12,11 @@ Successful redirections = |A ∩ B|
 Success % = |A ∩ B| / |A| * 100
 """
 
+import html
+import smtplib
 import sys
+from datetime import date
+from email.message import EmailMessage
 
 import clickhouse_connect
 import pymysql
@@ -23,6 +27,11 @@ from config import (
     CLICKHOUSE_PASSWORD,
     CLICKHOUSE_PORT,
     CLICKHOUSE_USER,
+    SMTP_FROM,
+    SMTP_HOST,
+    SMTP_PASSWORD,
+    SMTP_PORT,
+    SMTP_USER,
     db_config,
 )
 
@@ -30,6 +39,7 @@ MYSQL_CONFIG = db_config()
 LOOKBACK_DAYS = 21
 LENDER_TYPE_API = 1
 LENDER_TYPE_UTM = 2
+REPORT_EMAIL_TO = ["anup.vaze@appkhichadi.com"]
 
 
 def get_clickhouse_client():
@@ -46,12 +56,20 @@ def fetch_lenders(mysql_conn):
     with mysql_conn.cursor() as cursor:
         cursor.execute(
             """
-            SELECT id, lender_name, lender_type
+            SELECT id, lender_name, product_offering, lender_type
             FROM mf_lenders
             ORDER BY id
             """
         )
         return cursor.fetchall()
+
+
+def format_lender_display_name(lender_name, product_offering):
+    name = (lender_name or "Unknown").strip() or "Unknown"
+    offering = (product_offering or "").strip()
+    if offering:
+        return f"{name} - {offering}"
+    return name
 
 
 def fetch_utm_eligible_application_ids(ch_client, lender_id):
@@ -115,7 +133,7 @@ def lender_type_label(lender_type):
     return str(lender_type)
 
 
-def print_table(rows):
+def format_table_rows(rows):
     headers = (
         "Lender ID",
         "Lender Name",
@@ -136,9 +154,13 @@ def print_table(rows):
                 f"{row['success_pct']:.2f}%",
             )
         )
+    return table_rows
 
+
+def print_table(rows):
+    table_rows = format_table_rows(rows)
     widths = [
-        max(len(r[i]) for r in table_rows) for i in range(len(headers))
+        max(len(r[i]) for r in table_rows) for i in range(len(table_rows[0]))
     ]
 
     def fmt(row):
@@ -149,6 +171,79 @@ def print_table(rows):
     print(separator)
     for row in table_rows[1:]:
         print(fmt(row))
+
+
+def build_text_report(rows):
+    table_rows = format_table_rows(rows)
+    lines = [
+        f"Lender Redirect Analysis — last {LOOKBACK_DAYS} days",
+        f"Report date: {date.today()}",
+        "",
+    ]
+    widths = [
+        max(len(r[i]) for r in table_rows) for i in range(len(table_rows[0]))
+    ]
+    for i, row in enumerate(table_rows):
+        lines.append(
+            " | ".join(cell.ljust(widths[j]) for j, cell in enumerate(row))
+        )
+        if i == 0:
+            lines.append("-+-".join("-" * w for w in widths))
+    return "\n".join(lines)
+
+
+def build_html_report(rows):
+    table_rows = format_table_rows(rows)
+    header_cells = "".join(
+        f"<th>{html.escape(cell)}</th>" for cell in table_rows[0]
+    )
+    body_rows = []
+    for row in table_rows[1:]:
+        cells = "".join(f"<td>{html.escape(cell)}</td>" for cell in row)
+        body_rows.append(f"<tr>{cells}</tr>")
+
+    return f"""
+<html>
+  <body style="font-family: Arial, sans-serif; color: #111827;">
+    <h2>Lender Redirect Analysis</h2>
+    <p>Last {LOOKBACK_DAYS} days | Report date: {date.today()}</p>
+    <table border="1" cellpadding="8" cellspacing="0"
+           style="border-collapse: collapse; border-color: #cbd5e1;">
+      <thead style="background: #f59e0b;">
+        <tr>{header_cells}</tr>
+      </thead>
+      <tbody>
+        {"".join(body_rows)}
+      </tbody>
+    </table>
+  </body>
+</html>
+""".strip()
+
+
+def send_report_email(rows):
+    if not SMTP_USER or not SMTP_PASSWORD:
+        raise RuntimeError(
+            "SMTP is not configured. Set SMTP_USER and SMTP_PASSWORD in .env"
+        )
+
+    subject = f"Lender Redirect Analysis - {date.today()}"
+    text_body = build_text_report(rows)
+    html_body = build_html_report(rows)
+
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = SMTP_FROM
+    msg["To"] = ", ".join(REPORT_EMAIL_TO)
+    msg.set_content(text_body)
+    msg.add_alternative(html_body, subtype="html")
+
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+        server.starttls()
+        server.login(SMTP_USER, SMTP_PASSWORD)
+        server.send_message(msg)
+
+    print(f"Report email sent to {', '.join(REPORT_EMAIL_TO)}")
 
 
 def analyse_lender_redirections():
@@ -168,7 +263,10 @@ def analyse_lender_redirections():
 
         for lender in lenders:
             lender_id = lender["id"]
-            lender_name = lender["lender_name"] or "Unknown"
+            lender_name = format_lender_display_name(
+                lender.get("lender_name"),
+                lender.get("product_offering"),
+            )
             lender_type = int(lender["lender_type"] or 0)
 
             if lender_type == LENDER_TYPE_UTM:
@@ -214,6 +312,7 @@ def analyse_lender_redirections():
 
         print()
         print_table(rows)
+        send_report_email(rows)
         return rows
     finally:
         mysql_conn.close()

@@ -42,9 +42,47 @@ from config import (
 MYSQL_CONFIG = db_config()
 LENDER_TYPE_API = 1
 LENDER_TYPE_UTM = 2
-OFFER_URL = "https://moneyfatafat.com"
+FALLBACK_OFFER_URL = "https://moneyfatafat.com"
+TRACKIER_PUB_ID = 218
+TRACKIER_EMAIL_SOURCE = "Email_MF"
 OFFER_FACTOR_MIN = 0.55
 OFFER_FACTOR_MAX = 0.85
+
+
+def _trackier_url(campaign_id):
+    return (
+        "https://profuse.gotrackier.com/click"
+        f"?campaign_id={campaign_id}"
+        f"&pub_id={TRACKIER_PUB_ID}"
+        f"&source={TRACKIER_EMAIL_SOURCE}"
+    )
+
+
+# lender_id → redirect URL (from moneyfatafat apply.tsx / partners.tsx)
+LENDER_REDIRECT_URLS = {
+    1: _trackier_url(211),  # Ram Fincorp
+    2: _trackier_url(210),  # Poonawalla Fincorp
+    3: _trackier_url(212),  # Emergency Paisa
+    4: _trackier_url(200),  # Salary Top Up
+    5: _trackier_url(134),  # Salary On Time
+    6: _trackier_url(187),  # Surya Loan
+    7: _trackier_url(211),  # Ram Fincorp (alt product)
+    8: _trackier_url(210),  # Poonawalla Fincorp (alt product)
+    9: _trackier_url(221),  # mPokket
+    10: "https://www.mymoneybazaar.com",  # My Money Bazaar
+}
+
+
+def resolve_offer_url(lender_id, lender_name=None):
+    """Per-lender CTA URL; falls back to MoneyFatafat homepage."""
+    url = LENDER_REDIRECT_URLS.get(int(lender_id)) if lender_id is not None else None
+    if url:
+        return url
+    # CASHe is on the site (campaign 227) but lender_id may vary in DB
+    name_key = (lender_name or "").strip().lower().replace(" ", "")
+    if "cashe" in name_key:
+        return _trackier_url(227)
+    return FALLBACK_OFFER_URL
 
 EMAIL_SUBJECT_TEMPLATE = "Your Pre-Qualified Loan Offer from {lendername}"
 
@@ -155,6 +193,7 @@ EMAIL_BODY_TEMPLATE = """
 
 # Set to False to only print recipients without sending
 SEND_EMAILS = True
+SEND_TO_EMAIL = "anup.vaze@gmail.com"
 
 
 def get_clickhouse_client():
@@ -404,13 +443,14 @@ def build_send_jobs(targets, details_by_app):
         lendername = target["lender_name"]
         name = format_user_name(detail.get("name"))
         offer_amount = format_offer_amount(detail.get("loan_amount"))
+        offer_url = resolve_offer_url(target["lender_id"], lendername)
         subject = build_personalized_subject(lendername)
         html_body = build_personalized_html(
             lendername=lendername,
             name=name,
             offer_amount=offer_amount,
             expiry_date=expiry_date,
-            url=OFFER_URL,
+            url=offer_url,
         )
 
         jobs.append(
@@ -422,6 +462,7 @@ def build_send_jobs(targets, details_by_app):
                 "lender_name": lendername,
                 "name": name,
                 "offer_amount": offer_amount,
+                "offer_url": offer_url,
                 "subject": subject,
                 "html_body": html_body,
             }
@@ -461,10 +502,12 @@ def process_eligible_not_redirected_emails():
             print("SEND_EMAILS=False — listing recipients only:")
             for job in jobs:
                 print(
-                    f"  would send → {job['email']} | "
+                    f"  would send → {SEND_TO_EMAIL} "
+                    f"(original={job['email']}) | "
                     f"lender={job['lender_name']} | "
                     f"name={job['name']} | "
                     f"offer=₹{job['offer_amount']} | "
+                    f"url={job['offer_url']} | "
                     f"app={job['application_id']}"
                 )
             return []
@@ -472,22 +515,27 @@ def process_eligible_not_redirected_emails():
         sent = []
         failed = 0
         for job in jobs:
+            original_email = job["email"]
+            send_to = SEND_TO_EMAIL
             print(
-                f"Sending to {job['email']} "
-                f"(lender={job['lender_name']}, "
+                f"Sending to {send_to} "
+                f"(original={original_email}, "
+                f"lender={job['lender_name']}, "
                 f"app={job['application_id']}, "
-                f"offer=₹{job['offer_amount']})..."
+                f"offer=₹{job['offer_amount']}, "
+                f"url={job['offer_url']})..."
             )
             try:
                 result = send_email_via_pepipost(
-                    job["email"], job["subject"], job["html_body"]
+                    send_to, job["subject"], job["html_body"]
                 )
                 print(f"  Sent: {result}")
-                sent.append(job["email"])
+                sent.append(send_to)
             except APIException as exc:
                 failed += 1
                 print(
-                    f"  Pepipost error for {job['email']}: {exc}",
+                    f"  Pepipost error for {send_to} "
+                    f"(original={original_email}): {exc}",
                     file=sys.stderr,
                 )
 

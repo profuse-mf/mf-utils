@@ -47,6 +47,8 @@ TRACKIER_PUB_ID = 218
 EMAIL_REMARKETING_SOURCE = "email_remarketing"
 OFFER_FACTOR_MIN = 0.55
 OFFER_FACTOR_MAX = 0.85
+OFFER_AMOUNT_MIN = 1500
+OFFER_AMOUNT_MAX = 80000
 
 
 def _trackier_url(campaign_id):
@@ -247,6 +249,9 @@ def format_offer_amount(loan_amount):
     if base <= 0:
         base = 50000.0
     amount = int(round(base * random.uniform(OFFER_FACTOR_MIN, OFFER_FACTOR_MAX)))
+    amount = max(OFFER_AMOUNT_MIN, min(OFFER_AMOUNT_MAX, amount))
+    amount = int(round(amount / 1000) * 1000)
+    amount = max(OFFER_AMOUNT_MIN, min(OFFER_AMOUNT_MAX, amount))
     return f"{amount:,}"
 
 

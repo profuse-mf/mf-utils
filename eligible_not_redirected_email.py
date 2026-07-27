@@ -202,7 +202,6 @@ EMAIL_BODY_TEMPLATE = """
 
 # Set to False to only print recipients without sending
 SEND_EMAILS = True
-SEND_TO_EMAIL = "anup.vaze@gmail.com"
 
 
 def get_clickhouse_client():
@@ -255,10 +254,8 @@ def format_offer_amount(loan_amount):
     return f"{amount:,}"
 
 
-def format_offer_expiry_date(target_date=None):
-    if target_date is None:
-        target_date = date.today() - timedelta(days=1)
-    return target_date.strftime("%d %b %Y")
+def format_offer_expiry_date():
+    return (date.today() + timedelta(days=7)).strftime("%d %b %Y")
 
 
 def fetch_utm_eligible_application_ids(ch_client, lender_id, target_date):
@@ -436,11 +433,11 @@ def collect_eligible_not_redirected(mysql_conn, ch_client, target_date):
     return targets
 
 
-def build_send_jobs(targets, details_by_app, target_date):
+def build_send_jobs(targets, details_by_app):
     jobs = []
     skipped_no_email = 0
     skipped_missing_app = 0
-    expiry_date = format_offer_expiry_date(target_date)
+    expiry_date = format_offer_expiry_date()
 
     for target in targets:
         application_id = target["application_id"]
@@ -502,7 +499,7 @@ def process_eligible_not_redirected_emails():
         app_ids = sorted({item["application_id"] for item in targets})
         details_by_app = fetch_application_user_details(mysql_conn, app_ids)
         jobs, skipped_no_email, skipped_missing_app = build_send_jobs(
-            targets, details_by_app, target_date
+            targets, details_by_app
         )
         print(
             f"Emails to send: {len(jobs)} "
@@ -518,8 +515,7 @@ def process_eligible_not_redirected_emails():
             print("SEND_EMAILS=False — listing recipients only:")
             for job in jobs:
                 print(
-                    f"  would send → {SEND_TO_EMAIL} "
-                    f"(original={job['email']}) | "
+                    f"  would send → {job['email']} | "
                     f"lender={job['lender_name']} | "
                     f"name={job['name']} | "
                     f"offer=₹{job['offer_amount']} | "
@@ -531,12 +527,10 @@ def process_eligible_not_redirected_emails():
         sent = []
         failed = 0
         for job in jobs:
-            original_email = job["email"]
-            send_to = SEND_TO_EMAIL
+            send_to = job["email"]
             print(
                 f"Sending to {send_to} "
-                f"(original={original_email}, "
-                f"lender={job['lender_name']}, "
+                f"(lender={job['lender_name']}, "
                 f"app={job['application_id']}, "
                 f"offer=₹{job['offer_amount']}, "
                 f"url={job['offer_url']})..."
@@ -550,8 +544,7 @@ def process_eligible_not_redirected_emails():
             except APIException as exc:
                 failed += 1
                 print(
-                    f"  Pepipost error for {send_to} "
-                    f"(original={original_email}): {exc}",
+                    f"  Pepipost error for {send_to}: {exc}",
                     file=sys.stderr,
                 )
 

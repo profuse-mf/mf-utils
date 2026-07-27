@@ -123,6 +123,19 @@ RAMFINCORP_JWE_TTL_SEC = int(
     _env("RAM_FINCORP_JWE_TTL_SEC") or _env("RAMFINCORP_JWE_TTL_SEC") or "300"
 )
 
+# Trackier Clicks Report API
+# Docs: https://api-docs.trackier.io/docs/perf-admin-api-docs/e4a1e1388a249-clicks-report
+TRACKIER_API_KEY = _env("TRACKIER_API_KEY")
+TRACKIER_CLICKS_API_URL = _env(
+    "TRACKIER_CLICKS_API_URL",
+    "https://api.trackier.com/v2/reports/clicks",
+)
+# Comma-separated publisher IDs, e.g. "218,219"
+TRACKIER_PUB_IDS = _env_list("TRACKIER_PUB_IDS")
+TRACKIER_CLICKS_LOOKBACK_DAYS = _env_int("TRACKIER_CLICKS_LOOKBACK_DAYS", 2)
+TRACKIER_TIMEZONE = _env("TRACKIER_TIMEZONE", "Asia/Kolkata")
+TRACKIER_CLICKS_LIMIT = _env_int("TRACKIER_CLICKS_LIMIT", 5000)
+
 # Legacy wa_reminder scripts used API_URL / API_KEY in .env
 WA_API_URL = _env("WA_API_URL") or _env("API_URL")
 WA_API_KEY = _env("WA_API_KEY") or _env("API_KEY")

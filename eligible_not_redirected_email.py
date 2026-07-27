@@ -255,8 +255,10 @@ def format_offer_amount(loan_amount):
     return f"{amount:,}"
 
 
-def format_offer_expiry_date():
-    return (date.today() + timedelta(days=7)).strftime("%d %b %Y")
+def format_offer_expiry_date(target_date=None):
+    if target_date is None:
+        target_date = date.today() - timedelta(days=1)
+    return target_date.strftime("%d %b %Y")
 
 
 def fetch_utm_eligible_application_ids(ch_client, lender_id, target_date):
@@ -434,11 +436,11 @@ def collect_eligible_not_redirected(mysql_conn, ch_client, target_date):
     return targets
 
 
-def build_send_jobs(targets, details_by_app):
+def build_send_jobs(targets, details_by_app, target_date):
     jobs = []
     skipped_no_email = 0
     skipped_missing_app = 0
-    expiry_date = format_offer_expiry_date()
+    expiry_date = format_offer_expiry_date(target_date)
 
     for target in targets:
         application_id = target["application_id"]
@@ -500,7 +502,7 @@ def process_eligible_not_redirected_emails():
         app_ids = sorted({item["application_id"] for item in targets})
         details_by_app = fetch_application_user_details(mysql_conn, app_ids)
         jobs, skipped_no_email, skipped_missing_app = build_send_jobs(
-            targets, details_by_app
+            targets, details_by_app, target_date
         )
         print(
             f"Emails to send: {len(jobs)} "

@@ -44,7 +44,7 @@ LENDER_TYPE_API = 1
 LENDER_TYPE_UTM = 2
 FALLBACK_OFFER_URL = "https://moneyfatafat.com"
 TRACKIER_PUB_ID = 218
-TRACKIER_EMAIL_SOURCE = "Email_MF"
+EMAIL_REMARKETING_SOURCE = "email_remarketing"
 OFFER_FACTOR_MIN = 0.55
 OFFER_FACTOR_MAX = 0.85
 
@@ -54,7 +54,14 @@ def _trackier_url(campaign_id):
         "https://profuse.gotrackier.com/click"
         f"?campaign_id={campaign_id}"
         f"&pub_id={TRACKIER_PUB_ID}"
-        f"&source={TRACKIER_EMAIL_SOURCE}"
+    )
+
+
+def append_email_remarketing_params(url, application_id):
+    separator = "&" if "?" in url else "?"
+    return (
+        f"{url}{separator}source={EMAIL_REMARKETING_SOURCE}"
+        f"&p1={application_id}"
     )
 
 
@@ -73,16 +80,16 @@ LENDER_REDIRECT_URLS = {
 }
 
 
-def resolve_offer_url(lender_id, lender_name=None):
-    """Per-lender CTA URL; falls back to MoneyFatafat homepage."""
+def resolve_offer_url(lender_id, application_id, lender_name=None):
+    """Per-lender CTA URL with email remarketing tracking params."""
     url = LENDER_REDIRECT_URLS.get(int(lender_id)) if lender_id is not None else None
-    if url:
-        return url
-    # CASHe is on the site (campaign 227) but lender_id may vary in DB
-    name_key = (lender_name or "").strip().lower().replace(" ", "")
-    if "cashe" in name_key:
-        return _trackier_url(227)
-    return FALLBACK_OFFER_URL
+    if not url:
+        name_key = (lender_name or "").strip().lower().replace(" ", "")
+        if "cashe" in name_key:
+            url = _trackier_url(227)
+        else:
+            url = FALLBACK_OFFER_URL
+    return append_email_remarketing_params(url, application_id)
 
 EMAIL_SUBJECT_TEMPLATE = "Your Pre-Qualified Loan Offer from {lendername}"
 
@@ -443,7 +450,9 @@ def build_send_jobs(targets, details_by_app):
         lendername = target["lender_name"]
         name = format_user_name(detail.get("name"))
         offer_amount = format_offer_amount(detail.get("loan_amount"))
-        offer_url = resolve_offer_url(target["lender_id"], lendername)
+        offer_url = resolve_offer_url(
+            target["lender_id"], application_id, lendername
+        )
         subject = build_personalized_subject(lendername)
         html_body = build_personalized_html(
             lendername=lendername,

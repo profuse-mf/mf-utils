@@ -79,6 +79,7 @@ LENDER_REDIRECT_URLS = {
     8: _trackier_url(210),  # Poonawalla Fincorp (alt product)
     9: _trackier_url(221),  # mPokket
     10: "https://www.mymoneybazaar.com",  # My Money Bazaar
+    11: _trackier_url(227),  # CASHe
 }
 
 
@@ -86,11 +87,7 @@ def resolve_offer_url(lender_id, application_id, lender_name=None):
     """Per-lender CTA URL with email remarketing tracking params."""
     url = LENDER_REDIRECT_URLS.get(int(lender_id)) if lender_id is not None else None
     if not url:
-        name_key = (lender_name or "").strip().lower().replace(" ", "")
-        if "cashe" in name_key:
-            url = _trackier_url(227)
-        else:
-            url = FALLBACK_OFFER_URL
+        url = FALLBACK_OFFER_URL
     return append_email_remarketing_params(url, application_id)
 
 EMAIL_SUBJECT_TEMPLATE = "Your Pre-Qualified Loan Offer from {lendername}"

@@ -4,11 +4,13 @@ API: GET https://api.trackier.com/v2/reports/clicks
 Docs: https://api-docs.trackier.io/docs/perf-admin-api-docs/e4a1e1388a249-clicks-report
 
 Mapping campaign_id → lender_id:
+  134 → 5 (Salary On Time)
   187 → 6
   200 → 4
   211 → 1 if BRE eligible for lender 1, else 7 if BRE eligible for lender 7, else skip
   212 → 3
   221 → 9
+  227 → 11 (CASHe)
 
 Unmapped campaign_ids trigger an alert email to MF_REPORT_EMAIL_TO
 (same daily-report recipients used by mis_new.py / daily ops).
@@ -46,10 +48,12 @@ CLICK_FIELDS = ("campaign_id", "p1")
 
 # Static campaign_id → lender_id (except 211, resolved via BRE)
 CAMPAIGN_LENDER_MAP = {
+    134: 5,   # Salary On Time
     187: 6,
     200: 4,
     212: 3,
     221: 9,
+    227: 11,  # CASHe
 }
 CAMPAIGN_211 = 211
 CAMPAIGN_211_LENDER_PREFERENCE = (1, 7)

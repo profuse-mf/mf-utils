@@ -7,24 +7,27 @@ import requests
 
 API_URL = "https://utilsapi.smsmsg.in/waba/sendmessage"
 API_KEY = "e6eb44d10c5bea3233cf88e6dfa2b234"
-TEMPLATE_ID = "904773802059603"
+TEMPLATE_ID = "1571984130956515"
 PHONE = "+918867188207"
 
 PLACEHOLDERS = [
-    "Anup",
-    "18000",
+    "Anup,",
+    "1,00,000",
     "MPokket",
-    "moneyfatafat.com",
 ]
+BUTTON_URL = "https://moneyfatafat.com/"
 
 
 def send_message():
     payload = {
         "template": TEMPLATE_ID,
         "phone": PHONE,
-        "is_short_url": "1",
+        "is_short_url": "0",
         "message": {
             "placeholders": PLACEHOLDERS,
+            "button": {
+                "url": BUTTON_URL,
+            },
         },
     }
     headers = {
@@ -34,6 +37,7 @@ def send_message():
 
     print(f"Sending template {TEMPLATE_ID} to {PHONE}")
     print(f"Placeholders: {PLACEHOLDERS}")
+    print(f"Button URL: {BUTTON_URL}")
 
     response = requests.post(API_URL, json=payload, headers=headers, timeout=30)
     print(f"HTTP {response.status_code}")

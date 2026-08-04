@@ -201,6 +201,8 @@ def process_inactive_60_days_whatsapp():
                     f"lender={job['lender_name']} | "
                     f"offer=₹{job['offer_amount']}"
                 )
+            print()
+            print(f"Total recipients: {len(jobs)}")
             return []
 
         sent = []

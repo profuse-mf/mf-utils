@@ -24,7 +24,7 @@ MYSQL_CONFIG = db_config()
 WA_API_URL = "https://utilsapi.smsmsg.in/waba/sendmessage"
 WA_API_KEY = "e6eb44d10c5bea3233cf88e6dfa2b234"
 WA_TEMPLATE_ID = "1571984130956515"
-SEND_MESSAGES = False
+SEND_MESSAGES = True
 
 INACTIVE_DAYS = 60
 OFFER_URL = (

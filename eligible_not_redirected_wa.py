@@ -40,6 +40,10 @@ FALLBACK_OFFER_URL = "https://moneyfatafat.com"
 TRACKIER_PUB_ID = 218
 REMARKETING_SOURCE = "WA"
 
+# Preferred lenders for the chosen application (by lender_id).
+# P1 Surya Loan, P2 mPokket, P3 Emergency Paisa; else lowest lender_id.
+LENDER_PRIORITY = (6, 9, 3)
+
 OFFER_FACTOR_MIN = 0.55
 OFFER_FACTOR_MAX = 0.85
 OFFER_AMOUNT_MIN = 1500
@@ -261,8 +265,17 @@ def format_offer_amount(loan_amount):
     return f"{amount:,}"
 
 
+def choose_lender_for_application(lender_targets):
+    """Prefer P1→P3 lenders; else lowest lender_id."""
+    by_id = {int(target["lender_id"]): target for target in lender_targets}
+    for lender_id in LENDER_PRIORITY:
+        if lender_id in by_id:
+            return by_id[lender_id]
+    return min(lender_targets, key=lambda target: int(target["lender_id"]))
+
+
 def choose_one_target_per_user(targets, details_by_app):
-    """Choose the second chronological app, then its first lender, per user."""
+    """Choose the second chronological app, then preferred lender, per user."""
     targets_by_user = defaultdict(lambda: defaultdict(list))
     missing_details = 0
 
@@ -287,13 +300,12 @@ def choose_one_target_per_user(targets, details_by_app):
         selected_application_id = (
             application_ids[1] if len(application_ids) > 1 else application_ids[0]
         )
-        first_lender = min(
-            targets_by_app[selected_application_id],
-            key=lambda target: target["lender_id"],
+        chosen_lender = choose_lender_for_application(
+            targets_by_app[selected_application_id]
         )
         selected.append(
             {
-                **first_lender,
+                **chosen_lender,
                 **details_by_app[selected_application_id],
                 "user_id": user_id,
             }

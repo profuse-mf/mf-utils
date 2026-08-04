@@ -68,6 +68,18 @@ MMB_API_URL = _env(
     "https://mm-app-backend.mymoneybazaar.com/api/merchant/lead_details/",
 )
 
+# CASHe Status API (checksum matches mf-api cashe.controller.js)
+CASHE_BASE_URL = (
+    _env("CASHE_BASE_URL") or "https://partners.cashe.co.in"
+).rstrip("/")
+CASHE_PARTNER_NAME = _env("CASHE_PARTNER_NAME", "Profuses_API")
+CASHE_CHECKSUM_SECRET = _env("CASHE_CHECKSUM_SECRET")
+# Curl had a space in the path; default assumes /v1/partner/customer_status
+CASHE_STATUS_PATH = _env("CASHE_STATUS_PATH", "/v1/partner/customer_status")
+CASHE_STATUS_API_URL = _env("CASHE_STATUS_API_URL") or (
+    f"{CASHE_BASE_URL}{CASHE_STATUS_PATH}"
+)
+
 # Ram Fincorp Status API (aligns with mf-api RAM_FINCORP_* env names)
 RAMFINCORP_BASE_URL = (
     _env("RAM_FINCORP_BASE_URL")

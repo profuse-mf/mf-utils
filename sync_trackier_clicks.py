@@ -11,6 +11,9 @@ Mapping campaign_id → lender_id:
   212 → 3
   221 → 9
   227 → 11 (CASHe)
+  234 → 13 (PayMe)
+  235 → 12 (CreditSea)
+  236 → 14 (Rupeedhan)
 
 Unmapped campaign_ids trigger an alert email to MF_REPORT_EMAIL_TO
 (same daily-report recipients used by mis_new.py / daily ops).
@@ -54,6 +57,9 @@ CAMPAIGN_LENDER_MAP = {
     212: 3,
     221: 9,
     227: 11,  # CASHe
+    234: 13,  # PayMe
+    235: 12,  # CreditSea
+    236: 14,  # Rupeedhan
 }
 CAMPAIGN_211 = 211
 CAMPAIGN_211_LENDER_PREFERENCE = (1, 7)

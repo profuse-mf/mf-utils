@@ -80,6 +80,9 @@ LENDER_REDIRECT_URLS = {
     9: _trackier_url(221),  # mPokket
     10: "https://www.mymoneybazaar.com",  # My Money Bazaar
     11: _trackier_url(227),  # CASHe
+    12: _trackier_url(235),  # CreditSea
+    13: _trackier_url(234),  # PayMe
+    14: _trackier_url(236),  # Rupeedhan
 }
 
 

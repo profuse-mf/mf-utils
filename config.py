@@ -74,8 +74,7 @@ CASHE_BASE_URL = (
 ).rstrip("/")
 CASHE_PARTNER_NAME = _env("CASHE_PARTNER_NAME", "Profuses_API")
 CASHE_CHECKSUM_SECRET = _env("CASHE_CHECKSUM_SECRET")
-# Curl had a space in the path; default assumes /v1/partner/customer_status
-CASHE_STATUS_PATH = _env("CASHE_STATUS_PATH", "/v1/partner/customer_status")
+CASHE_STATUS_PATH = _env("CASHE_STATUS_PATH", "/auto_login/loan_status")
 CASHE_STATUS_API_URL = _env("CASHE_STATUS_API_URL") or (
     f"{CASHE_BASE_URL}{CASHE_STATUS_PATH}"
 )

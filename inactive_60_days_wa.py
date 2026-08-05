@@ -25,6 +25,8 @@ WA_API_URL = "https://utilsapi.smsmsg.in/waba/sendmessage"
 WA_API_KEY = "e6eb44d10c5bea3233cf88e6dfa2b234"
 WA_TEMPLATE_ID = "1571984130956515"
 SEND_MESSAGES = True
+CAMPAIGN_CHANNEL = "WA"
+CAMPAIGN_NAME = "60 Days Inactive"
 
 INACTIVE_DAYS = 60
 OFFER_URL = (
@@ -171,6 +173,28 @@ def send_whatsapp(job):
     return body
 
 
+def insert_campaign_record(mysql_conn, submitted_count):
+    with mysql_conn.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO mf_campaigns
+                (channel, submitted_count, stats, created, template, campaign_name)
+            VALUES
+                (%s, %s, CAST(%s AS JSON), NOW(), %s, %s)
+            """,
+            (
+                CAMPAIGN_CHANNEL,
+                int(submitted_count),
+                json.dumps({}),
+                WA_TEMPLATE_ID,
+                CAMPAIGN_NAME,
+            ),
+        )
+        campaign_id = cursor.lastrowid
+    mysql_conn.commit()
+    return campaign_id
+
+
 def process_inactive_60_days_whatsapp():
     mysql_conn = pymysql.connect(**MYSQL_CONFIG)
 
@@ -221,7 +245,11 @@ def process_inactive_60_days_whatsapp():
                 failed += 1
                 print(f"  Failed: {exc}", file=sys.stderr)
 
-        print(f"Done. Sent={len(sent)}, Failed={failed}")
+        campaign_id = insert_campaign_record(mysql_conn, len(sent))
+        print(
+            f"Done. Sent={len(sent)}, Failed={failed}, "
+            f"mf_campaigns.id={campaign_id}, stats={{}}"
+        )
         return sent
     finally:
         mysql_conn.close()

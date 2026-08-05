@@ -11,7 +11,7 @@ import json
 import random
 import re
 import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import date, timedelta
 
 import clickhouse_connect
@@ -33,6 +33,8 @@ WA_API_URL = "https://utilsapi.smsmsg.in/waba/sendmessage"
 WA_API_KEY = "e6eb44d10c5bea3233cf88e6dfa2b234"
 WA_TEMPLATE_ID = "1571984130956515"
 SEND_MESSAGES = True
+CAMPAIGN_CHANNEL = "WA"
+CAMPAIGN_NAME = "D-1 Remarketing"
 
 LENDER_TYPE_API = 1
 LENDER_TYPE_UTM = 2
@@ -378,6 +380,36 @@ def send_whatsapp(job):
     return body
 
 
+def build_lender_stats(sent_jobs):
+    counts = Counter(
+        (job.get("lender_name") or "Unknown").strip() or "Unknown"
+        for job in sent_jobs
+    )
+    return dict(sorted(counts.items(), key=lambda item: item[0].lower()))
+
+
+def insert_campaign_record(mysql_conn, submitted_count, stats):
+    with mysql_conn.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO mf_campaigns
+                (channel, submitted_count, stats, created, template, campaign_name)
+            VALUES
+                (%s, %s, CAST(%s AS JSON), NOW(), %s, %s)
+            """,
+            (
+                CAMPAIGN_CHANNEL,
+                int(submitted_count),
+                json.dumps(stats, ensure_ascii=False),
+                WA_TEMPLATE_ID,
+                CAMPAIGN_NAME,
+            ),
+        )
+        campaign_id = cursor.lastrowid
+    mysql_conn.commit()
+    return campaign_id
+
+
 def process_eligible_not_redirected_whatsapp():
     target_date = date.today() - timedelta(days=1)
     mysql_conn = pymysql.connect(**MYSQL_CONFIG)
@@ -414,7 +446,7 @@ def process_eligible_not_redirected_whatsapp():
                 )
             return []
 
-        sent = []
+        sent_jobs = []
         failed = 0
         for job in jobs:
             print(
@@ -425,13 +457,20 @@ def process_eligible_not_redirected_whatsapp():
             try:
                 result = send_whatsapp(job)
                 print(f"  Sent: {result}")
-                sent.append(job["phone"])
+                sent_jobs.append(job)
             except Exception as exc:
                 failed += 1
                 print(f"  Failed: {exc}", file=sys.stderr)
 
-        print(f"Done. Sent={len(sent)}, Failed={failed}")
-        return sent
+        stats = build_lender_stats(sent_jobs)
+        campaign_id = insert_campaign_record(
+            mysql_conn, len(sent_jobs), stats
+        )
+        print(
+            f"Done. Sent={len(sent_jobs)}, Failed={failed}, "
+            f"mf_campaigns.id={campaign_id}, stats={stats}"
+        )
+        return [job["phone"] for job in sent_jobs]
     finally:
         mysql_conn.close()
 

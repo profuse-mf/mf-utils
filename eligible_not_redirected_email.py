@@ -12,8 +12,10 @@ Target apps = A - B.
 Personalized Pepipost email per (lender, application).
 """
 
+import json
 import random
 import sys
+from collections import Counter
 from datetime import date, timedelta
 
 import clickhouse_connect
@@ -202,6 +204,9 @@ EMAIL_BODY_TEMPLATE = """
 
 # Set to False to only print recipients without sending
 SEND_EMAILS = True
+CAMPAIGN_CHANNEL = "Email"
+CAMPAIGN_TEMPLATE = "TEMPL-1"
+CAMPAIGN_NAME = "D-1 Remarketing"
 
 
 def get_clickhouse_client():
@@ -484,6 +489,36 @@ def build_send_jobs(targets, details_by_app):
     return jobs, skipped_no_email, skipped_missing_app
 
 
+def build_lender_stats(sent_jobs):
+    counts = Counter(
+        (job.get("lender_name") or "Unknown").strip() or "Unknown"
+        for job in sent_jobs
+    )
+    return dict(sorted(counts.items(), key=lambda item: item[0].lower()))
+
+
+def insert_campaign_record(mysql_conn, submitted_count, stats):
+    with mysql_conn.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO mf_campaigns
+                (channel, submitted_count, stats, created, template, campaign_name)
+            VALUES
+                (%s, %s, CAST(%s AS JSON), NOW(), %s, %s)
+            """,
+            (
+                CAMPAIGN_CHANNEL,
+                int(submitted_count),
+                json.dumps(stats, ensure_ascii=False),
+                CAMPAIGN_TEMPLATE,
+                CAMPAIGN_NAME,
+            ),
+        )
+        campaign_id = cursor.lastrowid
+    mysql_conn.commit()
+    return campaign_id
+
+
 def process_eligible_not_redirected_emails():
     target_date = date.today() - timedelta(days=1)
     mysql_conn = pymysql.connect(**MYSQL_CONFIG)
@@ -524,7 +559,7 @@ def process_eligible_not_redirected_emails():
                 )
             return []
 
-        sent = []
+        sent_jobs = []
         failed = 0
         for job in jobs:
             send_to = job["email"]
@@ -540,7 +575,7 @@ def process_eligible_not_redirected_emails():
                     send_to, job["subject"], job["html_body"]
                 )
                 print(f"  Sent: {result}")
-                sent.append(send_to)
+                sent_jobs.append(job)
             except APIException as exc:
                 failed += 1
                 print(
@@ -548,9 +583,16 @@ def process_eligible_not_redirected_emails():
                     file=sys.stderr,
                 )
 
+        stats = build_lender_stats(sent_jobs)
+        campaign_id = insert_campaign_record(
+            mysql_conn, len(sent_jobs), stats
+        )
         print()
-        print(f"Done. Sent={len(sent)}, Failed={failed}")
-        return sent
+        print(
+            f"Done. Sent={len(sent_jobs)}, Failed={failed}, "
+            f"mf_campaigns.id={campaign_id}, stats={stats}"
+        )
+        return [job["email"] for job in sent_jobs]
     finally:
         mysql_conn.close()
 

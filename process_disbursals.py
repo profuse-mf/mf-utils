@@ -620,7 +620,7 @@ def resolve_lender_name(lender_id, lender_names):
 
 
 def fetch_disbursed_counts_by_period():
-    """Lender-wise disbursed counts from mf_disbursals."""
+    """Lender-wise disbursed counts keyed by application_master.application_date."""
     status_list = ", ".join(f"'{status}'" for status in sorted(DISBURSED_STATUSES))
     conn = pymysql.connect(**DB_CONFIG)
     try:
@@ -633,34 +633,34 @@ def fetch_disbursed_counts_by_period():
                         AS lender_name,
                     SUM(
                         CASE
-                            WHEN d.d_date
-                                 >= DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY)
+                            WHEN DATE(a.application_date) >= DATE_SUB(
+                                CURDATE(), INTERVAL DAYOFWEEK(CURDATE()) - 1 DAY
+                            )
                             THEN 1 ELSE 0
                         END
                     ) AS weekly,
                     SUM(
                         CASE
-                            WHEN d.d_date >= DATE_FORMAT(CURDATE(), '%%Y-%%m-01')
+                            WHEN DATE(a.application_date)
+                                 >= DATE_FORMAT(CURDATE(), '%%Y-%%m-01')
                             THEN 1 ELSE 0
                         END
                     ) AS monthly,
                     SUM(
                         CASE
-                            WHEN d.d_date >= CURDATE() - INTERVAL 30 DAY
+                            WHEN DATE(a.application_date) >= CURDATE() - INTERVAL 30 DAY
                             THEN 1 ELSE 0
                         END
                     ) AS last_30_days,
                     SUM(
                         CASE
-                            WHEN d.d_date >= DATE_ADD(
-                                MAKEDATE(YEAR(CURDATE()), 1),
-                                INTERVAL QUARTER(CURDATE()) - 1 QUARTER
-                            )
+                            WHEN DATE(a.application_date) >= CURDATE() - INTERVAL 90 DAY
                             THEN 1 ELSE 0
                         END
-                    ) AS this_quarter,
+                    ) AS last_3_months,
                     COUNT(*) AS lifetime
                 FROM mf_disbursals AS d
+                LEFT JOIN application_master AS a ON a.id = d.application_id
                 LEFT JOIN mf_lenders AS l ON l.id = d.lender_id
                 WHERE LOWER(TRIM(IFNULL(d.d_status, ''))) IN ({status_list})
                 GROUP BY d.lender_id, lender_name
@@ -733,15 +733,7 @@ def send_new_status_email(new_statuses_by_lender):
 
 
 def build_processing_report_email(summary):
-    lender_names = summary["lender_names"]
-    run_by_lender = summary["run_updates_by_lender"]
     period_rows = summary["period_disbursals"]
-
-    run_rows_html = "".join(
-        f"<tr><td>{html.escape(resolve_lender_name(lender_id, lender_names))}</td>"
-        f"<td>{count}</td></tr>"
-        for lender_id, count in sorted(run_by_lender.items())
-    ) or "<tr><td colspan='2'>No lead_master updates</td></tr>"
 
     period_rows_html = "".join(
         (
@@ -750,7 +742,7 @@ def build_processing_report_email(summary):
             f"<td>{int(row['weekly'] or 0)}</td>"
             f"<td>{int(row['monthly'] or 0)}</td>"
             f"<td>{int(row['last_30_days'] or 0)}</td>"
-            f"<td>{int(row['this_quarter'] or 0)}</td>"
+            f"<td>{int(row['last_3_months'] or 0)}</td>"
             f"<td>{int(row['lifetime'] or 0)}</td>"
             "</tr>"
         )
@@ -759,29 +751,18 @@ def build_processing_report_email(summary):
 
     subject = (
         f"Disbursal processing report - "
-        f"{summary['total_updated']} updated - {datetime.now().date()}"
+        f"{summary['total_api_disbursals']} disbursals - {datetime.now().date()}"
     )
-    disbursed_list = ", ".join(sorted(DISBURSED_STATUSES))
 
     html_body = f"""
 <html>
   <body>
     <h2>Disbursal file processing report</h2>
-    <p><strong>Total lead_master updates this run:</strong> {summary['total_updated']}</p>
+    <p><strong>Total API Disbursals this run:</strong> {summary['total_api_disbursals']}</p>
     <p><strong>Files processed:</strong> {summary['files_processed']}</p>
-    <p><strong>Rows read:</strong> {summary['rows_read']}</p>
+    <p><strong>Disbursals Processed:</strong> {summary['rows_read']}</p>
     <p><strong>Skipped (no lead + no BRE eligible):</strong> {summary['skipped_missing_lead']}</p>
     <p><strong>Accepted via BRE (empty criteria_missed):</strong> {summary['bre_accepted']}</p>
-    <p><strong>Matched via lender alias (1↔7 / 2↔8):</strong> {summary['alias_matched']}</p>
-    <p><strong>mf_disbursals inserted:</strong> {summary['disbursals_inserted']}</p>
-    <p><strong>mf_disbursals updated:</strong> {summary['disbursals_updated']}</p>
-    <p><em>Disbursed statuses (case-insensitive): {html.escape(disbursed_list)}</em></p>
-
-    <h3>This run — lender-wise lead_master updates</h3>
-    <table border="1" cellpadding="8" cellspacing="0">
-      <tr><th>Lender</th><th>Updates</th></tr>
-      {run_rows_html}
-    </table>
 
     <h3>Actual disbursals in mf_disbursals</h3>
     <table border="1" cellpadding="8" cellspacing="0">
@@ -790,7 +771,7 @@ def build_processing_report_email(summary):
         <th>This week</th>
         <th>This month</th>
         <th>Last 30 days</th>
-        <th>This quarter</th>
+        <th>Last 3 months</th>
         <th>Lifetime</th>
       </tr>
       {period_rows_html}
@@ -801,30 +782,21 @@ def build_processing_report_email(summary):
 
     text_lines = [
         "Disbursal file processing report",
-        f"Total lead_master updates this run: {summary['total_updated']}",
+        f"Total API Disbursals this run: {summary['total_api_disbursals']}",
         f"Files processed: {summary['files_processed']}",
-        f"Rows read: {summary['rows_read']}",
+        f"Disbursals Processed: {summary['rows_read']}",
         f"Skipped (no lead + no BRE): {summary['skipped_missing_lead']}",
         f"Accepted via BRE: {summary['bre_accepted']}",
-        f"Matched via lender alias: {summary['alias_matched']}",
-        f"mf_disbursals inserted: {summary['disbursals_inserted']}",
-        f"mf_disbursals updated: {summary['disbursals_updated']}",
-        f"Disbursed statuses: {disbursed_list}",
         "",
-        "This run — lender-wise lead_master updates:",
+        "Actual disbursals in mf_disbursals:",
     ]
-    for lender_id, count in sorted(run_by_lender.items()):
-        text_lines.append(
-            f"  {resolve_lender_name(lender_id, lender_names)}: {count}"
-        )
-    text_lines.extend(["", "Actual disbursals in mf_disbursals:"])
     for row in period_rows:
         text_lines.append(
             f"  {row['lender_name']} (id={row['lender_id']}): "
             f"week={int(row['weekly'] or 0)}, "
             f"month={int(row['monthly'] or 0)}, "
             f"30d={int(row['last_30_days'] or 0)}, "
-            f"quarter={int(row['this_quarter'] or 0)}, "
+            f"3m={int(row['last_3_months'] or 0)}, "
             f"lifetime={int(row['lifetime'] or 0)}"
         )
     return subject, "\n".join(text_lines), html_body
@@ -898,7 +870,6 @@ def process_disbursals():
     total_bre_accepted = 0
     total_disbursals_inserted = 0
     total_disbursals_updated = 0
-    run_updates_by_lender = defaultdict(int)
     rows_read = 0
 
     for config in LENDER_CONFIGS:
@@ -930,8 +901,6 @@ def process_disbursals():
         total_bre_accepted += result["bre_accepted"]
         total_disbursals_inserted += result["disbursals_inserted"]
         total_disbursals_updated += result["disbursals_updated"]
-        for matched_lender_id, count in result["updated_by_lender"].items():
-            run_updates_by_lender[matched_lender_id] += count
 
         print(
             f"Results for file lender_id={lender_id}: "
@@ -957,22 +926,14 @@ def process_disbursals():
     send_new_status_email(new_statuses_by_lender)
 
     period_disbursals = fetch_disbursed_counts_by_period()
-    lender_ids_for_names = set(run_updates_by_lender) | {
-        int(row["lender_id"]) for row in period_disbursals
-    }
     send_processing_report_email(
         {
-            "total_updated": total_updated,
+            "total_api_disbursals": total_disbursals_inserted + total_disbursals_updated,
             "files_processed": len(processed_keys),
             "rows_read": rows_read,
             "skipped_missing_lead": total_skipped,
             "bre_accepted": total_bre_accepted,
-            "alias_matched": total_alias_matched,
-            "disbursals_inserted": total_disbursals_inserted,
-            "disbursals_updated": total_disbursals_updated,
-            "run_updates_by_lender": dict(run_updates_by_lender),
             "period_disbursals": period_disbursals,
-            "lender_names": fetch_lender_names(list(lender_ids_for_names)),
         }
     )
 

@@ -1,15 +1,14 @@
 """Sync CASHe lead status into lead_master.
 
 Status API:
-  POST {CASHE_BASE_URL}/auto_login/loan_status
+  POST {CASHE_BASE_URL}/partner/customer_status
   Headers: Content-Type, Check-Sum (HMAC-SHA1 of Python json.dumps body)
-  Body: { partner_name, partner_customer_token_id }
+  Body: { partner_name, partner_customer_id }
 
 Checksum matches mf-api cashe.controller.js / CASHe Python sample:
   HMAC-SHA1(secret, json.dumps(payload)) → Base64
 
-partner_customer_token_id is taken from lead_master.lender_ref_id
-(stored during lead gen in mf-api).
+partner_customer_id is taken from lead_master.lender_ref_id.
 """
 
 import base64
@@ -94,10 +93,10 @@ def fetch_leads():
         conn.close()
 
 
-def fetch_cashe_status(partner_customer_token_id):
+def fetch_cashe_status(partner_customer_id):
     payload = {
         "partner_name": CASHE_PARTNER_NAME,
-        "partner_customer_token_id": str(partner_customer_token_id),
+        "partner_customer_id": str(partner_customer_id),
     }
     body_string, checksum = generate_checksum(payload, CASHE_CHECKSUM_SECRET)
 
@@ -120,7 +119,7 @@ def fetch_cashe_status(partner_customer_token_id):
         error_body = exc.read().decode("utf-8", errors="replace")
         raise RuntimeError(
             f"CASHe API error {exc.code} for "
-            f"partner_customer_token_id={partner_customer_token_id}: {error_body}"
+            f"partner_customer_id={partner_customer_id}: {error_body}"
         ) from exc
 
 
@@ -140,7 +139,6 @@ def extract_status_payload(response_body):
     if status in {"ERROR", "VALIDATION_ERROR", "FAIL", "FAILED"}:
         return None
 
-    # Some CASHe APIs return fields at the top level
     if any(
         key in response_body
         for key in (
@@ -215,14 +213,14 @@ def process_cashe_statuses():
 
     for lead in leads:
         lead_id = lead["id"]
-        partner_customer_token_id = str(lead["lender_ref_id"]).strip()
+        partner_customer_id = str(lead["lender_ref_id"]).strip()
         print(
             f"Processing lead_id={lead_id}, "
-            f"partner_customer_token_id={partner_customer_token_id}"
+            f"partner_customer_id={partner_customer_id}"
         )
 
         try:
-            response_body = fetch_cashe_status(partner_customer_token_id)
+            response_body = fetch_cashe_status(partner_customer_id)
             print(f"  Response: {json.dumps(response_body, default=str)[:500]}")
             item = extract_status_payload(response_body)
             if not item:

@@ -1,11 +1,13 @@
 import csv
 import html
+import json
 import os
+import re
 import smtplib
 import sys
 import tempfile
 from collections import defaultdict
-from datetime import datetime
+from datetime import date, datetime
 from email.message import EmailMessage
 from pathlib import Path
 
@@ -33,36 +35,16 @@ EMAIL_TO = DISBURSAL_ALERT_EMAIL_TO
 PROCESSING_REPORT_EMAIL_TO = ["anup@profuseservices.com"]
 
 # Filenames: lenderid_{lender_id}_...
-# Status column still depends on lender report format.
-# App ID column defaults to common headers; override with app_id_column if needed.
 LENDER_CONFIGS = [
-    {
-        "lender_id": 1,
-        "status_column": "currentStatus",
-    },
-    {
-        "lender_id": 2,
-        "status_column": "Loan Status",
-    },
-    {
-        "lender_id": 3,
-        "status_column": "status",
-    },
-    {
-        "lender_id": 4,
-        "status_column": "Status",
-    },
-    {
-        "lender_id": 7,
-        "status_column": "currentStatus",
-    },
-    {
-        "lender_id": 8,
-        "status_column": "Loan Status",
-    },
+    {"lender_id": 1, "status_column": "currentStatus"},
+    {"lender_id": 2, "status_column": "Loan Status"},
+    {"lender_id": 3, "status_column": "status"},
+    {"lender_id": 4, "status_column": "Status"},
+    {"lender_id": 7, "status_column": "currentStatus"},
+    {"lender_id": 8, "status_column": "Loan Status"},
 ]
 
-# Same lender, different product lines — try both IDs when matching leads.
+# Same lender, different product lines — try both IDs when matching leads/BRE.
 LENDER_ID_ALIASES = {
     1: (1, 7),
     7: (7, 1),
@@ -77,10 +59,16 @@ DEFAULT_APP_ID_COLUMNS = (
     "app_id",
     "ApplicationId",
 )
+DEFAULT_AMOUNT_COLUMNS = ("Dis Amt", "Disbursed Amount", "dis_amt", "Amount")
+DEFAULT_DATE_COLUMNS = ("Dis Date", "Disbursement Date", "dis_date", "Disbursed Date")
 
-# Temporary: treat only "Disbursed" as disbursed (case-insensitive).
-# Expand later when full status list is confirmed.
-DISBURSED_STATUSES = ("disbursed",)
+# Case-insensitive disbursed statuses.
+DISBURSED_STATUSES = frozenset(
+    {
+        "disbursed",
+        "approved process",
+    }
+)
 
 
 def file_prefix_for_lender(lender_id):
@@ -88,7 +76,6 @@ def file_prefix_for_lender(lender_id):
 
 
 def lookup_lender_ids(lender_id):
-    """Preferred lender_id first, then product-line alias if any."""
     lender_id = int(lender_id)
     return LENDER_ID_ALIASES.get(lender_id, (lender_id,))
 
@@ -112,36 +99,28 @@ def explain_s3_error(exc):
     return message
 
 
-def get_aws_credentials():
-    return AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION
-
-
 def get_s3_client():
-    access_key, secret_key, region = get_aws_credentials()
     return boto3.client(
         "s3",
-        aws_access_key_id=access_key,
-        aws_secret_access_key=secret_key,
-        region_name=region,
+        aws_access_key_id=AWS_ACCESS_KEY_ID,
+        aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
+        region_name=AWS_REGION,
     )
 
 
 def list_s3_objects(s3_client):
     objects = []
     paginator = s3_client.get_paginator("list_objects_v2")
-
     for page in paginator.paginate(Bucket=S3_BUCKET):
         for item in page.get("Contents", []):
             objects.append(item["Key"])
-
     return objects
 
 
 def match_lender_config(key):
     stem = Path(key).name
     for config in LENDER_CONFIGS:
-        prefix = file_prefix_for_lender(config["lender_id"])
-        if stem.startswith(prefix):
+        if stem.startswith(file_prefix_for_lender(config["lender_id"])):
             return config
     return None
 
@@ -166,9 +145,7 @@ def find_first_column(fieldnames, column_names):
 
 def app_id_column_candidates(config):
     configured = config.get("app_id_column")
-    if configured:
-        return (configured,)
-    return DEFAULT_APP_ID_COLUMNS
+    return (configured,) if configured else DEFAULT_APP_ID_COLUMNS
 
 
 def normalize_application_id(value):
@@ -194,8 +171,66 @@ def normalize_status(value):
     return text
 
 
+def normalize_amount(value):
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text.lower() in {"nan", "none", "null", "na"}:
+        return None
+    text = text.replace(",", "")
+    return text[:15]
+
+
+def normalize_disbursal_date(value):
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    text = str(value).strip()
+    if not text or text.lower() in {"nan", "none", "null", "na"}:
+        return None
+    for fmt in ("%d-%m-%Y", "%Y-%m-%d", "%d/%m/%Y", "%Y/%m/%d", "%d-%m-%y", "%d/%m/%y"):
+        try:
+            return datetime.strptime(text[:10], fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
 def is_disbursed_status(status):
     return str(status or "").strip().lower() in DISBURSED_STATUSES
+
+
+def is_empty_criteria_missed(value):
+    if value is None:
+        return True
+    if isinstance(value, (bytes, bytearray)):
+        value = value.decode("utf-8", errors="replace")
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return True
+        try:
+            value = json.loads(text)
+        except json.JSONDecodeError:
+            text = re.sub(r"\s+", "", text)
+            return text in {"[]", "{}", "null", "None"}
+    if isinstance(value, dict):
+        return len(value) == 0
+    if isinstance(value, (list, tuple)):
+        return len(value) == 0
+    return False
+
+
+def build_row_record(application_id, status, amount, dis_date):
+    return {
+        "application_id": application_id,
+        "status": status,
+        "d_amount": amount,
+        "d_date": dis_date,
+    }
 
 
 def read_status_rows_from_csv(file_path, status_column, app_id_columns):
@@ -204,23 +239,30 @@ def read_status_rows_from_csv(file_path, status_column, app_id_columns):
         reader = csv.DictReader(csv_file)
         status_col = find_column(reader.fieldnames, status_column)
         app_id_col = find_first_column(reader.fieldnames, app_id_columns)
-        if not status_col:
-            print(f"  Warning: no '{status_column}' column in {file_path}")
-            return rows_out
+        amount_col = find_first_column(reader.fieldnames, DEFAULT_AMOUNT_COLUMNS)
+        date_col = find_first_column(reader.fieldnames, DEFAULT_DATE_COLUMNS)
+
         if not app_id_col:
             print(
                 f"  Warning: no application id column "
                 f"({', '.join(app_id_columns)}) in {file_path}"
             )
             return rows_out
+        if not status_col:
+            print(f"  Warning: no '{status_column}' column in {file_path}")
 
-        print(f"  Using columns: app_id='{app_id_col}', status='{status_col}'")
+        print(
+            f"  Using columns: app_id='{app_id_col}', status='{status_col}', "
+            f"amount='{amount_col}', date='{date_col}'"
+        )
         for row in reader:
             application_id = normalize_application_id(row.get(app_id_col))
-            status = normalize_status(row.get(status_col))
-            if application_id is None or status is None:
+            if application_id is None:
                 continue
-            rows_out.append((application_id, status))
+            status = normalize_status(row.get(status_col) if status_col else None)
+            amount = normalize_amount(row.get(amount_col) if amount_col else None)
+            dis_date = normalize_disbursal_date(row.get(date_col) if date_col else None)
+            rows_out.append(build_row_record(application_id, status, amount, dis_date))
     return rows_out
 
 
@@ -235,7 +277,6 @@ def read_status_rows_from_xlsx(file_path, status_column, app_id_columns):
     rows_out = []
     workbook = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
     sheet = workbook.active
-
     rows = sheet.iter_rows(values_only=True)
     header = next(rows, None)
     if not header:
@@ -245,10 +286,9 @@ def read_status_rows_from_xlsx(file_path, status_column, app_id_columns):
     header = [str(col).strip() if col is not None else "" for col in header]
     status_col = find_column(header, status_column)
     app_id_col = find_first_column(header, app_id_columns)
-    if not status_col:
-        print(f"  Warning: no '{status_column}' column in {file_path}")
-        workbook.close()
-        return rows_out
+    amount_col = find_first_column(header, DEFAULT_AMOUNT_COLUMNS)
+    date_col = find_first_column(header, DEFAULT_DATE_COLUMNS)
+
     if not app_id_col:
         print(
             f"  Warning: no application id column "
@@ -256,21 +296,40 @@ def read_status_rows_from_xlsx(file_path, status_column, app_id_columns):
         )
         workbook.close()
         return rows_out
+    if not status_col:
+        print(f"  Warning: no '{status_column}' column in {file_path}")
 
-    status_index = header.index(status_col)
     app_id_index = header.index(app_id_col)
-    print(f"  Using columns: app_id='{app_id_col}', status='{status_col}'")
+    status_index = header.index(status_col) if status_col else None
+    amount_index = header.index(amount_col) if amount_col else None
+    date_index = header.index(date_col) if date_col else None
+    print(
+        f"  Using columns: app_id='{app_id_col}', status='{status_col}', "
+        f"amount='{amount_col}', date='{date_col}'"
+    )
 
     for row in rows:
         application_id = normalize_application_id(
             row[app_id_index] if app_id_index < len(row) else None
         )
-        status = normalize_status(
-            row[status_index] if status_index < len(row) else None
-        )
-        if application_id is None or status is None:
+        if application_id is None:
             continue
-        rows_out.append((application_id, status))
+        status = normalize_status(
+            row[status_index]
+            if status_index is not None and status_index < len(row)
+            else None
+        )
+        amount = normalize_amount(
+            row[amount_index]
+            if amount_index is not None and amount_index < len(row)
+            else None
+        )
+        dis_date = normalize_disbursal_date(
+            row[date_index]
+            if date_index is not None and date_index < len(row)
+            else None
+        )
+        rows_out.append(build_row_record(application_id, status, amount, dis_date))
 
     workbook.close()
     return rows_out
@@ -319,7 +378,6 @@ def insert_new_statuses(cursor, lender_id, statuses):
 
 
 def find_lead_for_update(cursor, application_id, preferred_lender_id):
-    """Return (lead_id, matched_lender_id) trying preferred then alias lender ids."""
     for lender_id in lookup_lender_ids(preferred_lender_id):
         cursor.execute(
             """
@@ -337,6 +395,42 @@ def find_lead_for_update(cursor, application_id, preferred_lender_id):
     return None, None
 
 
+def is_bre_eligible(cursor, application_id, preferred_lender_id):
+    """True if application_bre_logs has empty criteria_missed for preferred/alias lender."""
+    for lender_id in lookup_lender_ids(preferred_lender_id):
+        cursor.execute(
+            """
+            SELECT criteria_missed, lender_id
+            FROM application_bre_logs
+            WHERE application_id = %s
+              AND lender_id = %s
+            ORDER BY id DESC
+            LIMIT 5
+            """,
+            (application_id, lender_id),
+        )
+        for row in cursor.fetchall():
+            if is_empty_criteria_missed(row.get("criteria_missed")):
+                return True, int(row["lender_id"])
+    return False, None
+
+
+def fetch_user_id_for_application(cursor, application_id):
+    cursor.execute(
+        """
+        SELECT userid
+        FROM application_master
+        WHERE id = %s
+        LIMIT 1
+        """,
+        (application_id,),
+    )
+    row = cursor.fetchone()
+    if not row or row.get("userid") is None:
+        return None
+    return int(row["userid"])
+
+
 def update_lead_disburse_status_by_id(cursor, lead_id, disburse_status):
     cursor.execute(
         """
@@ -350,29 +444,98 @@ def update_lead_disburse_status_by_id(cursor, lead_id, disburse_status):
     return cursor.rowcount
 
 
-def sync_file_rows_to_lead_master(status_rows, preferred_lender_id):
-    """Update lead_master.disburse_status when application_id+lender_id (or alias) exists."""
+def upsert_mf_disbursal(cursor, user_id, application_id, lender_id, d_status, d_amount, d_date):
+    cursor.execute(
+        """
+        SELECT id
+        FROM mf_disbursals
+        WHERE application_id = %s
+          AND lender_id = %s
+        LIMIT 1
+        """,
+        (application_id, lender_id),
+    )
+    existing = cursor.fetchone()
+    if existing:
+        cursor.execute(
+            """
+            UPDATE mf_disbursals
+            SET user_id = COALESCE(%s, user_id),
+                d_status = COALESCE(%s, d_status),
+                d_amount = COALESCE(%s, d_amount),
+                d_date = COALESCE(%s, d_date)
+            WHERE id = %s
+            """,
+            (user_id, d_status, d_amount, d_date, existing["id"]),
+        )
+        return "updated"
+    cursor.execute(
+        """
+        INSERT INTO mf_disbursals
+            (user_id, application_id, lender_id, d_status, d_amount, d_date)
+        VALUES (%s, %s, %s, %s, %s, %s)
+        """,
+        (user_id, application_id, lender_id, d_status, d_amount, d_date),
+    )
+    return "inserted"
+
+
+def sync_file_rows(status_rows, preferred_lender_id):
+    """Update lead_master and insert mf_disbursals for qualifying rows."""
     updated = 0
-    skipped_missing_lead = 0
-    updated_by_lender = defaultdict(int)
+    skipped_missing = 0
+    bre_accepted = 0
     alias_matched = 0
+    disbursals_inserted = 0
+    disbursals_updated = 0
+    updated_by_lender = defaultdict(int)
 
     conn = pymysql.connect(**DB_CONFIG)
     try:
         with conn.cursor() as cursor:
-            for application_id, status in status_rows:
+            for row in status_rows:
+                application_id = row["application_id"]
+                status = row["status"]
+
                 lead_id, matched_lender_id = find_lead_for_update(
                     cursor, application_id, preferred_lender_id
                 )
+
                 if lead_id is None:
-                    skipped_missing_lead += 1
-                    continue
-                if matched_lender_id != int(preferred_lender_id):
+                    bre_ok, bre_lender_id = is_bre_eligible(
+                        cursor, application_id, preferred_lender_id
+                    )
+                    if not bre_ok:
+                        skipped_missing += 1
+                        continue
+                    bre_accepted += 1
+                    matched_lender_id = bre_lender_id or int(preferred_lender_id)
+                elif matched_lender_id != int(preferred_lender_id):
                     alias_matched += 1
-                updated += update_lead_disburse_status_by_id(
-                    cursor, lead_id, status
-                )
-                updated_by_lender[matched_lender_id] += 1
+
+                if lead_id is not None and status:
+                    updated += update_lead_disburse_status_by_id(
+                        cursor, lead_id, status
+                    )
+                    updated_by_lender[matched_lender_id] += 1
+
+                # Insert even if Dis Date is empty — nullable fields stay NULL.
+                if is_disbursed_status(status):
+                    user_id = fetch_user_id_for_application(cursor, application_id)
+                    action = upsert_mf_disbursal(
+                        cursor,
+                        user_id=user_id,
+                        application_id=application_id,
+                        lender_id=matched_lender_id,
+                        d_status=status,
+                        d_amount=row.get("d_amount"),
+                        d_date=row.get("d_date"),
+                    )
+                    if action == "inserted":
+                        disbursals_inserted += 1
+                    else:
+                        disbursals_updated += 1
+
             conn.commit()
     except Exception:
         conn.rollback()
@@ -382,30 +545,34 @@ def sync_file_rows_to_lead_master(status_rows, preferred_lender_id):
 
     return {
         "updated": updated,
-        "skipped_missing_lead": skipped_missing_lead,
+        "skipped_missing_lead": skipped_missing,
+        "bre_accepted": bre_accepted,
         "alias_matched": alias_matched,
+        "disbursals_inserted": disbursals_inserted,
+        "disbursals_updated": disbursals_updated,
         "updated_by_lender": dict(updated_by_lender),
     }
 
 
 def sync_statuses_to_db(sheet_statuses, lender_id):
     conn = pymysql.connect(**DB_CONFIG)
-
     try:
         with conn.cursor() as cursor:
             existing_statuses = fetch_existing_statuses(cursor, lender_id)
-            new_statuses = sheet_statuses - existing_statuses
-
-            print(f"Existing statuses in DB for lender_id={lender_id}: {sorted(existing_statuses)}")
+            new_statuses = {
+                status for status in sheet_statuses if status
+            } - existing_statuses
+            print(
+                f"Existing statuses in DB for lender_id={lender_id}: "
+                f"{sorted(existing_statuses)}"
+            )
             print(f"New statuses to insert: {sorted(new_statuses)}")
-
             if new_statuses:
                 insert_new_statuses(cursor, lender_id, new_statuses)
                 conn.commit()
                 print(f"Inserted {len(new_statuses)} new status(es)")
             else:
                 print("No new statuses to insert")
-
             return new_statuses
     except Exception:
         conn.rollback()
@@ -436,10 +603,7 @@ def fetch_lender_names(lender_ids=None):
                     ORDER BY id
                     """
                 )
-            return {
-                row["id"]: row
-                for row in cursor.fetchall()
-            }
+            return {row["id"]: row for row in cursor.fetchall()}
     finally:
         conn.close()
 
@@ -456,53 +620,51 @@ def resolve_lender_name(lender_id, lender_names):
 
 
 def fetch_disbursed_counts_by_period():
-    """Lender-wise disbursed counts for weekly/monthly/30d/quarter/lifetime."""
+    """Lender-wise disbursed counts from mf_disbursals."""
+    status_list = ", ".join(f"'{status}'" for status in sorted(DISBURSED_STATUSES))
     conn = pymysql.connect(**DB_CONFIG)
     try:
         with conn.cursor() as cursor:
             cursor.execute(
-                """
+                f"""
                 SELECT
-                    lm.lender_id,
-                    COALESCE(NULLIF(TRIM(l.lender_name), ''), CONCAT('Lender ', lm.lender_id))
+                    d.lender_id,
+                    COALESCE(NULLIF(TRIM(l.lender_name), ''), CONCAT('Lender ', d.lender_id))
                         AS lender_name,
                     SUM(
                         CASE
-                            WHEN COALESCE(lm.disburse_datetime, lm.disbursal_status_check)
+                            WHEN d.d_date
                                  >= DATE_SUB(CURDATE(), INTERVAL WEEKDAY(CURDATE()) DAY)
                             THEN 1 ELSE 0
                         END
                     ) AS weekly,
                     SUM(
                         CASE
-                            WHEN COALESCE(lm.disburse_datetime, lm.disbursal_status_check)
-                                 >= DATE_FORMAT(CURDATE(), '%%Y-%%m-01')
+                            WHEN d.d_date >= DATE_FORMAT(CURDATE(), '%%Y-%%m-01')
                             THEN 1 ELSE 0
                         END
                     ) AS monthly,
                     SUM(
                         CASE
-                            WHEN COALESCE(lm.disburse_datetime, lm.disbursal_status_check)
-                                 >= NOW() - INTERVAL 30 DAY
+                            WHEN d.d_date >= CURDATE() - INTERVAL 30 DAY
                             THEN 1 ELSE 0
                         END
                     ) AS last_30_days,
                     SUM(
                         CASE
-                            WHEN COALESCE(lm.disburse_datetime, lm.disbursal_status_check)
-                                 >= DATE_ADD(
-                                     MAKEDATE(YEAR(CURDATE()), 1),
-                                     INTERVAL QUARTER(CURDATE()) - 1 QUARTER
-                                 )
+                            WHEN d.d_date >= DATE_ADD(
+                                MAKEDATE(YEAR(CURDATE()), 1),
+                                INTERVAL QUARTER(CURDATE()) - 1 QUARTER
+                            )
                             THEN 1 ELSE 0
                         END
                     ) AS this_quarter,
                     COUNT(*) AS lifetime
-                FROM lead_master AS lm
-                LEFT JOIN mf_lenders AS l ON l.id = lm.lender_id
-                WHERE LOWER(TRIM(lm.disburse_status)) = 'disbursed'
-                GROUP BY lm.lender_id, lender_name
-                ORDER BY lender_name, lm.lender_id
+                FROM mf_disbursals AS d
+                LEFT JOIN mf_lenders AS l ON l.id = d.lender_id
+                WHERE LOWER(TRIM(IFNULL(d.d_status, ''))) IN ({status_list})
+                GROUP BY d.lender_id, lender_name
+                ORDER BY lender_name, d.lender_id
                 """
             )
             return cursor.fetchall()
@@ -513,7 +675,6 @@ def fetch_disbursed_counts_by_period():
 def build_new_status_email(new_statuses_by_lender, lender_names):
     rows = []
     lender_names_for_subject = []
-
     for lender_id in sorted(new_statuses_by_lender):
         lender_name = resolve_lender_name(lender_id, lender_names)
         lender_names_for_subject.append(lender_name)
@@ -521,7 +682,6 @@ def build_new_status_email(new_statuses_by_lender, lender_names):
             rows.append((lender_name, status))
 
     subject = f"New status code detected - {', '.join(lender_names_for_subject)}"
-
     html_rows = "".join(
         f"<tr><td>{html.escape(lender_name)}</td><td>{html.escape(status)}</td></tr>"
         for lender_name, status in rows
@@ -531,25 +691,17 @@ def build_new_status_email(new_statuses_by_lender, lender_names):
   <body>
     <p>The following new lender status codes were detected and inserted:</p>
     <table border="1" cellpadding="8" cellspacing="0">
-      <tr>
-        <th>Lender Name</th>
-        <th>Status</th>
-      </tr>
+      <tr><th>Lender Name</th><th>Status</th></tr>
       {html_rows}
     </table>
   </body>
 </html>
 """.strip()
-
-    text_rows = "\n".join(
-        f"{lender_name} | {status}" for lender_name, status in rows
-    )
     text_body = (
         "The following new lender status codes were detected and inserted:\n\n"
         "Lender Name | Status\n"
-        f"{text_rows}"
+        + "\n".join(f"{name} | {status}" for name, status in rows)
     )
-
     return subject, text_body, html_body
 
 
@@ -560,12 +712,10 @@ def send_email(subject, text_body, html_body, to_emails):
     msg["To"] = ", ".join(to_emails)
     msg.set_content(text_body)
     msg.add_alternative(html_body, subtype="html")
-
     with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
         server.starttls()
         server.login(SMTP_USER, SMTP_PASSWORD)
         server.send_message(msg)
-
     print(f"Email sent to {', '.join(to_emails)}: {subject}")
 
 
@@ -575,7 +725,6 @@ def send_new_status_email(new_statuses_by_lender):
     if not EMAIL_TO:
         print("Skipping new-status email: DISBURSAL_ALERT_EMAIL_TO is empty")
         return
-
     lender_names = fetch_lender_names(list(new_statuses_by_lender.keys()))
     subject, text_body, html_body = build_new_status_email(
         new_statuses_by_lender, lender_names
@@ -606,12 +755,13 @@ def build_processing_report_email(summary):
             "</tr>"
         )
         for row in period_rows
-    ) or "<tr><td colspan='6'>No disbursed leads found</td></tr>"
+    ) or "<tr><td colspan='6'>No disbursed rows in mf_disbursals</td></tr>"
 
     subject = (
         f"Disbursal processing report - "
         f"{summary['total_updated']} updated - {datetime.now().date()}"
     )
+    disbursed_list = ", ".join(sorted(DISBURSED_STATUSES))
 
     html_body = f"""
 <html>
@@ -619,18 +769,21 @@ def build_processing_report_email(summary):
     <h2>Disbursal file processing report</h2>
     <p><strong>Total lead_master updates this run:</strong> {summary['total_updated']}</p>
     <p><strong>Files processed:</strong> {summary['files_processed']}</p>
-    <p><strong>Rows read (app_id + status):</strong> {summary['rows_read']}</p>
-    <p><strong>Skipped (no matching lead):</strong> {summary['skipped_missing_lead']}</p>
+    <p><strong>Rows read:</strong> {summary['rows_read']}</p>
+    <p><strong>Skipped (no lead + no BRE eligible):</strong> {summary['skipped_missing_lead']}</p>
+    <p><strong>Accepted via BRE (empty criteria_missed):</strong> {summary['bre_accepted']}</p>
     <p><strong>Matched via lender alias (1↔7 / 2↔8):</strong> {summary['alias_matched']}</p>
-    <p><em>Disbursed status filter (temporary): case-insensitive "Disbursed"</em></p>
+    <p><strong>mf_disbursals inserted:</strong> {summary['disbursals_inserted']}</p>
+    <p><strong>mf_disbursals updated:</strong> {summary['disbursals_updated']}</p>
+    <p><em>Disbursed statuses (case-insensitive): {html.escape(disbursed_list)}</em></p>
 
-    <h3>This run — lender-wise updates</h3>
+    <h3>This run — lender-wise lead_master updates</h3>
     <table border="1" cellpadding="8" cellspacing="0">
       <tr><th>Lender</th><th>Updates</th></tr>
       {run_rows_html}
     </table>
 
-    <h3>Actual disbursals (disburse_status = Disbursed)</h3>
+    <h3>Actual disbursals in mf_disbursals</h3>
     <table border="1" cellpadding="8" cellspacing="0">
       <tr>
         <th>Lender</th>
@@ -651,16 +804,20 @@ def build_processing_report_email(summary):
         f"Total lead_master updates this run: {summary['total_updated']}",
         f"Files processed: {summary['files_processed']}",
         f"Rows read: {summary['rows_read']}",
-        f"Skipped (no matching lead): {summary['skipped_missing_lead']}",
+        f"Skipped (no lead + no BRE): {summary['skipped_missing_lead']}",
+        f"Accepted via BRE: {summary['bre_accepted']}",
         f"Matched via lender alias: {summary['alias_matched']}",
+        f"mf_disbursals inserted: {summary['disbursals_inserted']}",
+        f"mf_disbursals updated: {summary['disbursals_updated']}",
+        f"Disbursed statuses: {disbursed_list}",
         "",
-        "This run — lender-wise updates:",
+        "This run — lender-wise lead_master updates:",
     ]
     for lender_id, count in sorted(run_by_lender.items()):
         text_lines.append(
             f"  {resolve_lender_name(lender_id, lender_names)}: {count}"
         )
-    text_lines.extend(["", "Actual disbursals (status=Disbursed):"])
+    text_lines.extend(["", "Actual disbursals in mf_disbursals:"])
     for row in period_rows:
         text_lines.append(
             f"  {row['lender_name']} (id={row['lender_id']}): "
@@ -670,7 +827,6 @@ def build_processing_report_email(summary):
             f"quarter={int(row['this_quarter'] or 0)}, "
             f"lifetime={int(row['lifetime'] or 0)}"
         )
-
     return subject, "\n".join(text_lines), html_body
 
 
@@ -680,22 +836,18 @@ def send_processing_report_email(summary):
 
 
 def local_path_for_key(temp_dir, key):
-    safe_name = key.replace("/", "_")
-    return os.path.join(temp_dir, safe_name)
+    return os.path.join(temp_dir, key.replace("/", "_"))
 
 
 def download_all_files(s3_client, temp_dir):
     keys = list_s3_objects(s3_client)
     downloaded_files = []
-
     print(f"Found {len(keys)} file(s) in s3://{S3_BUCKET}")
-
     for key in keys:
         local_path = local_path_for_key(temp_dir, key)
         print(f"Downloading {key}")
         s3_client.download_file(S3_BUCKET, key, local_path)
         downloaded_files.append((key, local_path))
-
     return downloaded_files
 
 
@@ -703,7 +855,6 @@ def delete_processed_files_from_s3(s3_client, keys):
     for key in keys:
         print(f"Deleting {key} from s3://{S3_BUCKET}")
         s3_client.delete_object(Bucket=S3_BUCKET, Key=key)
-
     if keys:
         print(f"Deleted {len(keys)} processed file(s) from S3")
 
@@ -733,9 +884,9 @@ def process_disbursals():
             )
             file_rows = read_status_rows(local_path, config)
             rows_by_lender[lender_id].extend(file_rows)
-            file_statuses = {status for _, status in file_rows}
+            file_statuses = {row["status"] for row in file_rows if row.get("status")}
             statuses_by_lender[lender_id].update(file_statuses)
-            print(f"  Rows with app_id+status: {len(file_rows)}")
+            print(f"  Rows with app_id: {len(file_rows)}")
             print(f"  Unique status values: {sorted(file_statuses)}")
 
     print()
@@ -744,6 +895,9 @@ def process_disbursals():
     total_updated = 0
     total_skipped = 0
     total_alias_matched = 0
+    total_bre_accepted = 0
+    total_disbursals_inserted = 0
+    total_disbursals_updated = 0
     run_updates_by_lender = defaultdict(int)
     rows_read = 0
 
@@ -757,8 +911,7 @@ def process_disbursals():
 
         if matched_files == 0:
             print(
-                f"No files starting with '{prefix}' "
-                f"found in s3://{S3_BUCKET}"
+                f"No files starting with '{prefix}' found in s3://{S3_BUCKET}"
             )
             continue
 
@@ -770,18 +923,23 @@ def process_disbursals():
         )
         print(f"Lookup lender ids (preferred + alias): {lookup_lender_ids(lender_id)}")
 
-        result = sync_file_rows_to_lead_master(status_rows, lender_id)
+        result = sync_file_rows(status_rows, lender_id)
         total_updated += result["updated"]
         total_skipped += result["skipped_missing_lead"]
         total_alias_matched += result["alias_matched"]
+        total_bre_accepted += result["bre_accepted"]
+        total_disbursals_inserted += result["disbursals_inserted"]
+        total_disbursals_updated += result["disbursals_updated"]
         for matched_lender_id, count in result["updated_by_lender"].items():
             run_updates_by_lender[matched_lender_id] += count
 
         print(
-            f"lead_master updates for file lender_id={lender_id}: "
-            f"updated={result['updated']}, "
-            f"skipped_no_matching_lead={result['skipped_missing_lead']}, "
-            f"alias_matched={result['alias_matched']}"
+            f"Results for file lender_id={lender_id}: "
+            f"lead_updated={result['updated']}, "
+            f"skipped={result['skipped_missing_lead']}, "
+            f"bre_accepted={result['bre_accepted']}, "
+            f"alias_matched={result['alias_matched']}, "
+            f"mf_disbursals +{result['disbursals_inserted']}/~{result['disbursals_updated']}"
         )
         print()
         new_statuses = sync_statuses_to_db(all_unique_statuses, lender_id)
@@ -808,7 +966,10 @@ def process_disbursals():
             "files_processed": len(processed_keys),
             "rows_read": rows_read,
             "skipped_missing_lead": total_skipped,
+            "bre_accepted": total_bre_accepted,
             "alias_matched": total_alias_matched,
+            "disbursals_inserted": total_disbursals_inserted,
+            "disbursals_updated": total_disbursals_updated,
             "run_updates_by_lender": dict(run_updates_by_lender),
             "period_disbursals": period_disbursals,
             "lender_names": fetch_lender_names(list(lender_ids_for_names)),

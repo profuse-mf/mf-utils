@@ -620,7 +620,7 @@ def resolve_lender_name(lender_id, lender_names):
 
 
 def fetch_disbursed_counts_by_period():
-    """Lender-wise disbursed counts keyed by application_master.application_date."""
+    """Lender-wise disbursed counts keyed by application_master.created_date."""
     status_list = ", ".join(f"'{status}'" for status in sorted(DISBURSED_STATUSES))
     conn = pymysql.connect(**DB_CONFIG)
     try:
@@ -633,7 +633,7 @@ def fetch_disbursed_counts_by_period():
                         AS lender_name,
                     SUM(
                         CASE
-                            WHEN DATE(a.application_date) >= DATE_SUB(
+                            WHEN a.created_date >= DATE_SUB(
                                 CURDATE(), INTERVAL DAYOFWEEK(CURDATE()) - 1 DAY
                             )
                             THEN 1 ELSE 0
@@ -641,20 +641,19 @@ def fetch_disbursed_counts_by_period():
                     ) AS weekly,
                     SUM(
                         CASE
-                            WHEN DATE(a.application_date)
-                                 >= DATE_FORMAT(CURDATE(), '%%Y-%%m-01')
+                            WHEN a.created_date >= DATE_FORMAT(CURDATE(), '%%Y-%%m-01')
                             THEN 1 ELSE 0
                         END
                     ) AS monthly,
                     SUM(
                         CASE
-                            WHEN DATE(a.application_date) >= CURDATE() - INTERVAL 30 DAY
+                            WHEN a.created_date >= CURDATE() - INTERVAL 30 DAY
                             THEN 1 ELSE 0
                         END
                     ) AS last_30_days,
                     SUM(
                         CASE
-                            WHEN DATE(a.application_date) >= CURDATE() - INTERVAL 90 DAY
+                            WHEN a.created_date >= CURDATE() - INTERVAL 90 DAY
                             THEN 1 ELSE 0
                         END
                     ) AS last_3_months,

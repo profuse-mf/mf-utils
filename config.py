@@ -79,6 +79,30 @@ CASHE_STATUS_API_URL = _env("CASHE_STATUS_API_URL") or (
     f"{CASHE_BASE_URL}{CASHE_STATUS_PATH}"
 )
 
+# Toofan Loan Marketplace Aggregator Status API
+# Guide: Marketplace_Aggregator_Integration_Guide.pdf — POST /status
+# Auth: x-api-credential = base64(access_key:secret_key)
+TOOFAN_BASE_URL = (
+    _env("TOOFAN_BASE_URL")
+    or "https://apilm.toofanloan.com/api/v1/marketplace/profuse"
+).rstrip("/")
+TOOFAN_ACCESS_KEY = _env(
+    "TOOFAN_ACCESS_KEY",
+    "pk_23915370505A7BEEF2F35D1D456C693C",
+)
+# Raw sk_… secret, OR the full base64(access:secret) credential string.
+TOOFAN_SECRET_KEY = _env(
+    "TOOFAN_SECRET_KEY",
+    "cGtfMjM5MTUzNzA1MDVBN0JFRUYyRjM1RDFENDU2QzY5M0M6c2tfZDc2ZTc4Y2JjY2VkYTMwOWRkMzhkMzlkMmVjNGExNGFjMDY2YmFmOWJlMzIzZjNmZjE1NDUxM2NlNWJjZjYwMg==",
+)
+TOOFAN_API_CREDENTIAL = _env("TOOFAN_API_CREDENTIAL", "")
+TOOFAN_STATUS_PATH = _env("TOOFAN_STATUS_PATH", "/status")
+TOOFAN_STATUS_API_URL = _env("TOOFAN_STATUS_API_URL") or (
+    f"{TOOFAN_BASE_URL}{TOOFAN_STATUS_PATH}"
+)
+# Override if mf_lenders.id differs; otherwise script resolves by lender_name.
+TOOFAN_LENDER_ID = _env("TOOFAN_LENDER_ID")
+
 # Ram Fincorp Status API (aligns with mf-api RAM_FINCORP_* env names)
 RAMFINCORP_BASE_URL = (
     _env("RAM_FINCORP_BASE_URL")

@@ -32,7 +32,6 @@ S3_BUCKET = S3_BUCKET_LENDER_REPORTS
 DB_CONFIG = db_config()
 EMAIL_FROM = SMTP_FROM
 EMAIL_TO = DISBURSAL_ALERT_EMAIL_TO
-PROCESSING_REPORT_EMAIL_TO = ["anup@profuseservices.com"]
 
 # Filenames: lenderid_{lender_id}_...
 LENDER_CONFIGS = [
@@ -802,8 +801,11 @@ def build_processing_report_email(summary):
 
 
 def send_processing_report_email(summary):
+    if not EMAIL_TO:
+        print("Skipping processing report email: DISBURSAL_ALERT_EMAIL_TO is empty")
+        return
     subject, text_body, html_body = build_processing_report_email(summary)
-    send_email(subject, text_body, html_body, PROCESSING_REPORT_EMAIL_TO)
+    send_email(subject, text_body, html_body, EMAIL_TO)
 
 
 def local_path_for_key(temp_dir, key):
@@ -936,11 +938,7 @@ def process_disbursals():
         }
     )
 
-    # S3 deletion temporarily disabled
-    # delete_processed_files_from_s3(s3_client, processed_keys)
-    print(
-        f"S3 deletion skipped ({len(processed_keys)} processed file(s) retained)"
-    )
+    delete_processed_files_from_s3(s3_client, processed_keys)
 
 
 if __name__ == "__main__":

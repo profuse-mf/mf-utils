@@ -46,7 +46,13 @@ from config import (
 
 MYSQL_CONFIG = db_config()
 REQUEST_DELAY_SECONDS = 0.5
-REPORT_EMAIL_TO = ["anup@profuseservices.com"]
+REPORT_EMAIL_TO = [
+    "anup@profuseservices.com",
+    "hiteshmittal@profuseservices.com",
+    "rishi.saraf@profuseservices.com",
+    "sravya@profuseservices.com",
+    "rakshithpola@profuseservices.com",
+]
 ALERT_EVENT_TYPES = ("softbounce", "hardbounce", "unsubscribe")
 
 # Non-aggregate event filters from the Events API docs.
@@ -100,11 +106,11 @@ def parse_args(argv=None):
     )
     parser.add_argument(
         "--startdate",
-        help="Start date YYYY-MM-DD (default: lookback days ago)",
+        help="Optional start date YYYY-MM-DD (default: today minus lookback days)",
     )
     parser.add_argument(
         "--enddate",
-        help="End date YYYY-MM-DD (default: today)",
+        help="Optional end date YYYY-MM-DD (default: today)",
     )
     parser.add_argument(
         "--events",
@@ -705,7 +711,6 @@ def build_report_email(summary, start, end, blanked_count, alert_emails):
     </table>
 
     <h3>Blocked email-ids ({len(alert_emails)})</h3>
-    <p>Addresses with softbounce / hardbounce / unsubscribe — cleared in mf_users.</p>
     <table border="1" cellpadding="8" cellspacing="0">
       <tr><th>Email</th></tr>
       {blocked_list_html}

@@ -48,6 +48,18 @@ SMTP_FROM = _env("SMTP_FROM", SMTP_USER)
 PEPIPOST_API_KEY = _env("PEPIPOST_API_KEY")
 PEPIPOST_FROM_EMAIL = _env("PEPIPOST_FROM_EMAIL", "info@moneyfatafat.com")
 PEPIPOST_FROM_NAME = _env("PEPIPOST_FROM_NAME", "MoneyFatafat")
+# Pepipost / Netcore Email API — Fetch Event Logs
+# Docs: https://cpaasdocs.netcorecloud.com/docs/pepipost-api/20c2883924165-fetch-event-logs
+#       https://emaildocs.netcorecloud.com/reference/logs
+PEPIPOST_EVENTS_BASE_URL = (
+    _env("PEPIPOST_EVENTS_BASE_URL") or "https://emailapi.netcorecloud.net/v5.1"
+).rstrip("/")
+PEPIPOST_EVENTS_PATH = _env("PEPIPOST_EVENTS_PATH", "/events")
+PEPIPOST_EVENTS_API_URL = _env("PEPIPOST_EVENTS_API_URL") or (
+    f"{PEPIPOST_EVENTS_BASE_URL}{PEPIPOST_EVENTS_PATH}"
+)
+PEPIPOST_EVENTS_LIMIT = _env_int("PEPIPOST_EVENTS_LIMIT", 1000)
+PEPIPOST_EVENTS_LOOKBACK_DAYS = _env_int("PEPIPOST_EVENTS_LOOKBACK_DAYS", 1)
 
 MPOKKET_API_KEY = _env("MPOKKET_API_KEY")
 MPOKKET_API_BASE = _env(

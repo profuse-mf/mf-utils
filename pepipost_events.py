@@ -473,6 +473,11 @@ def summarize(normalized_rows):
 
     by_date = {}
     overall = Counter()
+    alert_emails = {
+        "softbounce": [],
+        "hardbounce": [],
+        "unsubscribe": [],
+    }
     for row in normalized_rows:
         event_type = (row.get("event_type") or "unknown").lower()
         overall[event_type] += 1
@@ -482,6 +487,11 @@ def summarize(normalized_rows):
         else:
             day = event_time.date().isoformat()
         by_date.setdefault(day, Counter())[event_type] += 1
+
+        if event_type in alert_emails:
+            email = row.get("email") or "(missing email)"
+            day_label = day
+            alert_emails[event_type].append((day_label, email, row.get("remarks")))
 
     print("By event type:")
     for event_type, count in sorted(overall.items()):
@@ -494,6 +504,27 @@ def summarize(normalized_rows):
         total = sum(counts.values())
         parts = [f"{event_type}={counts[event_type]}" for event_type in sorted(counts)]
         print(f"  {day}  total={total}  " + "  ".join(parts))
+
+    print()
+    print("Emails — softbounce / hardbounce / unsubscribe:")
+    any_alert = False
+    for event_type in ("softbounce", "hardbounce", "unsubscribe"):
+        rows = alert_emails[event_type]
+        if not rows:
+            continue
+        any_alert = True
+        print(f"  {event_type} ({len(rows)}):")
+        # Deduplicate while keeping order: date + email
+        seen = set()
+        for day, email, remarks in rows:
+            key = (day, email.lower() if isinstance(email, str) else email)
+            if key in seen:
+                continue
+            seen.add(key)
+            remark_part = f"  remarks={remarks}" if remarks else ""
+            print(f"    {day}  {email}{remark_part}")
+    if not any_alert:
+        print("  (none)")
 
 
 def process_pepipost_events(argv=None):

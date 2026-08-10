@@ -103,6 +103,25 @@ TOOFAN_STATUS_API_URL = _env("TOOFAN_STATUS_API_URL") or (
 # Override if mf_lenders.id differs; otherwise script resolves by lender_name.
 TOOFAN_LENDER_ID = _env("TOOFAN_LENDER_ID")
 
+# CreditSea DSA Status API (Status_API_Doc.pdf)
+# POST /api/v1/dsa/get-loan-status — headers: apiKey, sourceId
+CREDITSEA_BASE_URL = (
+    _env("CREDITSEA_BASE_URL") or "https://backend.creditsea.com"
+).rstrip("/")
+CREDITSEA_STATUS_API_KEY = _env(
+    "CREDITSEA_STATUS_API_KEY",
+    "a7f3e9d2c8b4f6e1a9c3d7b2e5f8a1c4d6e9f2a7b3c8e1f4a9d2c7b5e8f1a3c6",
+)
+CREDITSEA_SOURCE_ID = _env("CREDITSEA_SOURCE_ID", "19345783")
+CREDITSEA_STATUS_PATH = _env(
+    "CREDITSEA_STATUS_PATH",
+    "/api/v1/dsa/get-loan-status",
+)
+CREDITSEA_STATUS_API_URL = _env("CREDITSEA_STATUS_API_URL") or (
+    f"{CREDITSEA_BASE_URL}{CREDITSEA_STATUS_PATH}"
+)
+CREDITSEA_LENDER_ID = _env_int("CREDITSEA_LENDER_ID", 12)
+
 # Ram Fincorp Status API (aligns with mf-api RAM_FINCORP_* env names)
 RAMFINCORP_BASE_URL = (
     _env("RAM_FINCORP_BASE_URL")

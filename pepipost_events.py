@@ -17,7 +17,9 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import html
 import json
+import smtplib
 import sys
 import time
 import urllib.error
@@ -25,6 +27,7 @@ import urllib.parse
 import urllib.request
 from collections import Counter
 from datetime import date, datetime, timedelta
+from email.message import EmailMessage
 
 import pymysql
 
@@ -33,11 +36,18 @@ from config import (
     PEPIPOST_EVENTS_API_URL,
     PEPIPOST_EVENTS_LIMIT,
     PEPIPOST_EVENTS_LOOKBACK_DAYS,
+    SMTP_FROM,
+    SMTP_HOST,
+    SMTP_PASSWORD,
+    SMTP_PORT,
+    SMTP_USER,
     db_config,
 )
 
 MYSQL_CONFIG = db_config()
 REQUEST_DELAY_SECONDS = 0.5
+REPORT_EMAIL_TO = ["anup@profuseservices.com"]
+ALERT_EVENT_TYPES = ("softbounce", "hardbounce", "unsubscribe")
 
 # Non-aggregate event filters from the Events API docs.
 DEFAULT_EVENTS = (
@@ -467,17 +477,11 @@ def fetch_all_events(args):
     return all_rows
 
 
-def summarize(normalized_rows):
-    print()
-    print(f"Total event rows: {len(normalized_rows)}")
-
+def build_summary(normalized_rows):
     by_date = {}
     overall = Counter()
-    alert_emails = {
-        "softbounce": [],
-        "hardbounce": [],
-        "unsubscribe": [],
-    }
+    alert_emails = {event_type: [] for event_type in ALERT_EVENT_TYPES}
+
     for row in normalized_rows:
         event_type = (row.get("event_type") or "unknown").lower()
         overall[event_type] += 1
@@ -489,18 +493,32 @@ def summarize(normalized_rows):
         by_date.setdefault(day, Counter())[event_type] += 1
 
         if event_type in alert_emails:
-            email = row.get("email") or "(missing email)"
-            day_label = day
-            alert_emails[event_type].append((day_label, email, row.get("remarks")))
+            email = row.get("email")
+            if email and email != "(missing email)":
+                alert_emails[event_type].append(
+                    (day, email, row.get("remarks"))
+                )
+
+    return {
+        "total": len(normalized_rows),
+        "overall": overall,
+        "by_date": by_date,
+        "alert_emails": alert_emails,
+    }
+
+
+def print_summary(summary):
+    print()
+    print(f"Total event rows: {summary['total']}")
 
     print("By event type:")
-    for event_type, count in sorted(overall.items()):
+    for event_type, count in sorted(summary["overall"].items()):
         print(f"  {event_type}: {count}")
 
     print()
     print("By date:")
-    for day in sorted(by_date):
-        counts = by_date[day]
+    for day in sorted(summary["by_date"]):
+        counts = summary["by_date"][day]
         total = sum(counts.values())
         parts = [f"{event_type}={counts[event_type]}" for event_type in sorted(counts)]
         print(f"  {day}  total={total}  " + "  ".join(parts))
@@ -508,16 +526,15 @@ def summarize(normalized_rows):
     print()
     print("Emails — softbounce / hardbounce / unsubscribe:")
     any_alert = False
-    for event_type in ("softbounce", "hardbounce", "unsubscribe"):
-        rows = alert_emails[event_type]
+    for event_type in ALERT_EVENT_TYPES:
+        rows = summary["alert_emails"][event_type]
         if not rows:
             continue
         any_alert = True
         print(f"  {event_type} ({len(rows)}):")
-        # Deduplicate while keeping order: date + email
         seen = set()
         for day, email, remarks in rows:
-            key = (day, email.lower() if isinstance(email, str) else email)
+            key = (day, email.lower())
             if key in seen:
                 continue
             seen.add(key)
@@ -527,9 +544,207 @@ def summarize(normalized_rows):
         print("  (none)")
 
 
+def collect_alert_email_addresses(summary):
+    emails = set()
+    for event_type in ALERT_EVENT_TYPES:
+        for _day, email, _remarks in summary["alert_emails"][event_type]:
+            text = str(email or "").strip()
+            if text and "@" in text:
+                emails.add(text)
+    return sorted(emails, key=str.lower)
+
+
+def blank_alert_emails_in_mf_users(conn, emails):
+    """SET email='' in mf_users for softbounce / hardbounce / unsubscribe addresses."""
+    if not emails:
+        print("No softbounce/hardbounce/unsubscribe emails to blank in mf_users")
+        return 0
+
+    updated = 0
+    with conn.cursor() as cursor:
+        for email in emails:
+            cursor.execute(
+                """
+                UPDATE mf_users
+                SET email = ''
+                WHERE email = %s
+                  AND TRIM(IFNULL(email, '')) != ''
+                """,
+                (email,),
+            )
+            updated += cursor.rowcount
+    conn.commit()
+    print(
+        f"Blanked email on {updated} mf_users row(s) "
+        f"for {len(emails)} alert address(es)"
+    )
+    return updated
+
+
+def build_report_email(summary, start, end, blanked_count, alert_emails):
+    subject = (
+        f"Pepipost events report {start} → {end} "
+        f"({summary['total']} events)"
+    )
+
+    text_lines = [
+        "Pepipost / Netcore email events report",
+        f"Date range: {start} → {end}",
+        f"Total event rows: {summary['total']}",
+        f"mf_users emails blanked: {blanked_count}",
+        "",
+        "By event type:",
+    ]
+    for event_type, count in sorted(summary["overall"].items()):
+        text_lines.append(f"  {event_type}: {count}")
+
+    text_lines.extend(["", "By date:"])
+    for day in sorted(summary["by_date"]):
+        counts = summary["by_date"][day]
+        total = sum(counts.values())
+        parts = [f"{event_type}={counts[event_type]}" for event_type in sorted(counts)]
+        text_lines.append(f"  {day}  total={total}  " + "  ".join(parts))
+
+    text_lines.extend(
+        [
+            "",
+            f"Blocked email-ids ({len(alert_emails)}) "
+            f"[softbounce / hardbounce / unsubscribe]:",
+        ]
+    )
+    blocked_detail_rows = []
+    for event_type in ALERT_EVENT_TYPES:
+        rows = summary["alert_emails"].get(event_type) or []
+        if not rows:
+            continue
+        text_lines.append(f"  {event_type}:")
+        seen = set()
+        for day, email, remarks in rows:
+            key = (event_type, day, email.lower())
+            if key in seen:
+                continue
+            seen.add(key)
+            remark_part = f" | {remarks}" if remarks else ""
+            text_lines.append(f"    {day}  {email}{remark_part}")
+            blocked_detail_rows.append((event_type, day, email, remarks))
+
+    if not blocked_detail_rows:
+        text_lines.append("  (none)")
+
+    date_rows_html = "".join(
+        (
+            "<tr>"
+            f"<td>{html.escape(day)}</td>"
+            f"<td>{sum(counts.values())}</td>"
+            + "".join(
+                f"<td>{counts.get(event_type, 0)}</td>"
+                for event_type in (
+                    "sent",
+                    "open",
+                    "click",
+                    "softbounce",
+                    "hardbounce",
+                    "dropped",
+                    "unsubscribe",
+                )
+            )
+            + "</tr>"
+        )
+        for day, counts in sorted(summary["by_date"].items())
+    ) or "<tr><td colspan='9'>No events</td></tr>"
+
+    overall_rows_html = "".join(
+        f"<tr><td>{html.escape(event_type)}</td><td>{count}</td></tr>"
+        for event_type, count in sorted(summary["overall"].items())
+    ) or "<tr><td colspan='2'>No events</td></tr>"
+
+    blocked_list_html = "".join(
+        f"<tr><td>{html.escape(email)}</td></tr>" for email in alert_emails
+    ) or "<tr><td>(none)</td></tr>"
+
+    blocked_detail_html = "".join(
+        (
+            "<tr>"
+            f"<td>{html.escape(event_type)}</td>"
+            f"<td>{html.escape(day)}</td>"
+            f"<td>{html.escape(email)}</td>"
+            f"<td>{html.escape(str(remarks or ''))}</td>"
+            "</tr>"
+        )
+        for event_type, day, email, remarks in blocked_detail_rows
+    ) or "<tr><td colspan='4'>(none)</td></tr>"
+
+    html_body = f"""
+<html>
+  <body>
+    <h2>Pepipost email events report</h2>
+    <p><strong>Date range:</strong> {html.escape(str(start))} → {html.escape(str(end))}</p>
+    <p><strong>Total event rows:</strong> {summary['total']}</p>
+    <p><strong>mf_users emails blanked:</strong> {blanked_count}</p>
+
+    <h3>By event type</h3>
+    <table border="1" cellpadding="8" cellspacing="0">
+      <tr><th>Event</th><th>Count</th></tr>
+      {overall_rows_html}
+    </table>
+
+    <h3>By date</h3>
+    <table border="1" cellpadding="8" cellspacing="0">
+      <tr>
+        <th>Date</th>
+        <th>Total</th>
+        <th>Sent</th>
+        <th>Open</th>
+        <th>Click</th>
+        <th>Softbounce</th>
+        <th>Hardbounce</th>
+        <th>Dropped</th>
+        <th>Unsubscribe</th>
+      </tr>
+      {date_rows_html}
+    </table>
+
+    <h3>Blocked email-ids ({len(alert_emails)})</h3>
+    <p>Addresses with softbounce / hardbounce / unsubscribe — cleared in mf_users.</p>
+    <table border="1" cellpadding="8" cellspacing="0">
+      <tr><th>Email</th></tr>
+      {blocked_list_html}
+    </table>
+
+    <h3>Blocked email-ids — detail</h3>
+    <table border="1" cellpadding="8" cellspacing="0">
+      <tr><th>Event</th><th>Date</th><th>Email</th><th>Remarks</th></tr>
+      {blocked_detail_html}
+    </table>
+  </body>
+</html>
+""".strip()
+
+    return subject, "\n".join(text_lines), html_body
+
+
+def send_report_email(subject, text_body, html_body, to_emails):
+    if not SMTP_USER or not SMTP_PASSWORD:
+        raise RuntimeError(
+            "SMTP is not configured. Set SMTP_USER and SMTP_PASSWORD in .env"
+        )
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = SMTP_FROM
+    msg["To"] = ", ".join(to_emails)
+    msg.set_content(text_body)
+    msg.add_alternative(html_body, subtype="html")
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+        server.starttls()
+        server.login(SMTP_USER, SMTP_PASSWORD)
+        server.send_message(msg)
+    print(f"Report email sent to {', '.join(to_emails)}: {subject}")
+
+
 def process_pepipost_events(argv=None):
     require_config()
     args = parse_args(argv)
+    start, end = resolve_dates(args)
     raw_rows = fetch_all_events(args)
 
     normalized = []
@@ -538,19 +753,27 @@ def process_pepipost_events(argv=None):
         if item:
             normalized.append(item)
 
-    summarize(normalized)
-
-    if args.no_store:
-        print("Skipped DB store (--no-store)")
-        return
+    summary = build_summary(normalized)
+    print_summary(summary)
+    alert_emails = collect_alert_email_addresses(summary)
 
     conn = pymysql.connect(**MYSQL_CONFIG)
     try:
-        ensure_events_table(conn)
-        stored = upsert_events(conn, normalized)
-        print(f"Upserted {stored} row(s) into mf_pepipost_events")
+        if not args.no_store:
+            ensure_events_table(conn)
+            stored = upsert_events(conn, normalized)
+            print(f"Upserted {stored} row(s) into mf_pepipost_events")
+        else:
+            print("Skipped DB store (--no-store)")
+
+        blanked_count = blank_alert_emails_in_mf_users(conn, alert_emails)
     finally:
         conn.close()
+
+    subject, text_body, html_body = build_report_email(
+        summary, start, end, blanked_count, alert_emails
+    )
+    send_report_email(subject, text_body, html_body, REPORT_EMAIL_TO)
 
 
 if __name__ == "__main__":

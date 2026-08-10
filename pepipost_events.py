@@ -54,6 +54,27 @@ REPORT_EMAIL_TO = [
     "rakshithpola@profuseservices.com",
 ]
 ALERT_EVENT_TYPES = ("softbounce", "hardbounce", "unsubscribe")
+EVENT_TYPE_ORDER = (
+    "sent",
+    "open",
+    "click",
+    "processed",
+    "dropped",
+    "hardbounce",
+    "softbounce",
+    "unsubscribe",
+)
+
+
+def ordered_event_counts(overall):
+    """Return (event_type, count) in report order; include zeros for known types."""
+    counts = {str(key).lower(): int(value) for key, value in overall.items()}
+    ordered = []
+    for event_type in EVENT_TYPE_ORDER:
+        ordered.append((event_type, counts.pop(event_type, 0)))
+    for event_type in sorted(counts):
+        ordered.append((event_type, counts[event_type]))
+    return ordered
 
 # Non-aggregate event filters from the Events API docs.
 DEFAULT_EVENTS = (
@@ -518,7 +539,7 @@ def print_summary(summary):
     print(f"Total event rows: {summary['total']}")
 
     print("By event type:")
-    for event_type, count in sorted(summary["overall"].items()):
+    for event_type, count in ordered_event_counts(summary["overall"]):
         print(f"  {event_type}: {count}")
 
     print()
@@ -601,7 +622,7 @@ def build_report_email(summary, start, end, blanked_count, alert_emails):
         "",
         "By event type:",
     ]
-    for event_type, count in sorted(summary["overall"].items()):
+    for event_type, count in ordered_event_counts(summary["overall"]):
         text_lines.append(f"  {event_type}: {count}")
 
     text_lines.extend(["", "By date:"])
@@ -637,6 +658,16 @@ def build_report_email(summary, start, end, blanked_count, alert_emails):
     if not blocked_detail_rows:
         text_lines.append("  (none)")
 
+    date_event_cols = (
+        "sent",
+        "open",
+        "click",
+        "processed",
+        "dropped",
+        "hardbounce",
+        "softbounce",
+        "unsubscribe",
+    )
     date_rows_html = "".join(
         (
             "<tr>"
@@ -644,24 +675,16 @@ def build_report_email(summary, start, end, blanked_count, alert_emails):
             f"<td>{sum(counts.values())}</td>"
             + "".join(
                 f"<td>{counts.get(event_type, 0)}</td>"
-                for event_type in (
-                    "sent",
-                    "open",
-                    "click",
-                    "softbounce",
-                    "hardbounce",
-                    "dropped",
-                    "unsubscribe",
-                )
+                for event_type in date_event_cols
             )
             + "</tr>"
         )
         for day, counts in sorted(summary["by_date"].items())
-    ) or "<tr><td colspan='9'>No events</td></tr>"
+    ) or f"<tr><td colspan='{2 + len(date_event_cols)}'>No events</td></tr>"
 
     overall_rows_html = "".join(
         f"<tr><td>{html.escape(event_type)}</td><td>{count}</td></tr>"
-        for event_type, count in sorted(summary["overall"].items())
+        for event_type, count in ordered_event_counts(summary["overall"])
     ) or "<tr><td colspan='2'>No events</td></tr>"
 
     blocked_list_html = "".join(
@@ -702,9 +725,10 @@ def build_report_email(summary, start, end, blanked_count, alert_emails):
         <th>Sent</th>
         <th>Open</th>
         <th>Click</th>
-        <th>Softbounce</th>
-        <th>Hardbounce</th>
+        <th>Processed</th>
         <th>Dropped</th>
+        <th>Hardbounce</th>
+        <th>Softbounce</th>
         <th>Unsubscribe</th>
       </tr>
       {date_rows_html}

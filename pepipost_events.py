@@ -468,13 +468,32 @@ def fetch_all_events(args):
 
 
 def summarize(normalized_rows):
-    counts = Counter(
-        (row.get("event_type") or "unknown").lower() for row in normalized_rows
-    )
     print()
     print(f"Total event rows: {len(normalized_rows)}")
-    for event_type, count in sorted(counts.items()):
+
+    by_date = {}
+    overall = Counter()
+    for row in normalized_rows:
+        event_type = (row.get("event_type") or "unknown").lower()
+        overall[event_type] += 1
+        event_time = row.get("event_time")
+        if event_time is None:
+            day = "unknown"
+        else:
+            day = event_time.date().isoformat()
+        by_date.setdefault(day, Counter())[event_type] += 1
+
+    print("By event type:")
+    for event_type, count in sorted(overall.items()):
         print(f"  {event_type}: {count}")
+
+    print()
+    print("By date:")
+    for day in sorted(by_date):
+        counts = by_date[day]
+        total = sum(counts.values())
+        parts = [f"{event_type}={counts[event_type]}" for event_type in sorted(counts)]
+        print(f"  {day}  total={total}  " + "  ".join(parts))
 
 
 def process_pepipost_events(argv=None):

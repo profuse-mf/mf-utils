@@ -100,24 +100,34 @@ def fetch_emergency_paisa_status(leadid):
     if referer:
         headers["Referer"] = referer
 
+    print("  Request:")
+    print("    GET", url)
+    for key, value in headers.items():
+        print(f"    {key}: {value}")
+
     request = urllib.request.Request(url, headers=headers, method="GET")
 
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
-            body = response.read().decode("utf-8")
-            return json.loads(body) if body else {}
+            http_status = response.getcode()
+            raw_body = response.read().decode("utf-8")
+            print(f"  Response HTTP {http_status}:")
+            print(f"    {raw_body}")
+            return json.loads(raw_body) if raw_body else {}
     except urllib.error.HTTPError as exc:
-        error_body = exc.read().decode("utf-8", errors="replace")
+        raw_body = exc.read().decode("utf-8", errors="replace")
+        print(f"  Response HTTP {exc.code}:")
+        print(f"    {raw_body}")
         # EP often returns HTTP 400 with a valid success payload
         # ({"status":1,"data":{"success":true,"lead_status":...}}).
         try:
-            payload = json.loads(error_body) if error_body else {}
+            payload = json.loads(raw_body) if raw_body else {}
         except json.JSONDecodeError:
             payload = None
         if isinstance(payload, dict) and extract_status_payload(payload):
             return payload
         raise RuntimeError(
-            f"Emergency Paisa API error {exc.code} for leadid={leadid}: {error_body}"
+            f"Emergency Paisa API error {exc.code} for leadid={leadid}: {raw_body}"
         ) from exc
 
 
@@ -210,7 +220,6 @@ def process_emergency_paisa_statuses():
 
         try:
             response_body = fetch_emergency_paisa_status(lender_ref_id)
-            print(f"  Response: {json.dumps(response_body, default=str)[:500]}")
             item = extract_status_payload(response_body)
             if not item:
                 data = response_body.get("data")

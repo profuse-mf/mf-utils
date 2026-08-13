@@ -108,6 +108,14 @@ def fetch_emergency_paisa_status(leadid):
             return json.loads(body) if body else {}
     except urllib.error.HTTPError as exc:
         error_body = exc.read().decode("utf-8", errors="replace")
+        # EP often returns HTTP 400 with a valid success payload
+        # ({"status":1,"data":{"success":true,"lead_status":...}}).
+        try:
+            payload = json.loads(error_body) if error_body else {}
+        except json.JSONDecodeError:
+            payload = None
+        if isinstance(payload, dict) and extract_status_payload(payload):
+            return payload
         raise RuntimeError(
             f"Emergency Paisa API error {exc.code} for leadid={leadid}: {error_body}"
         ) from exc

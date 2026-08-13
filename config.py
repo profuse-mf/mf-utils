@@ -134,6 +134,29 @@ CREDITSEA_STATUS_API_URL = _env("CREDITSEA_STATUS_API_URL") or (
 )
 CREDITSEA_LENDER_ID = _env_int("CREDITSEA_LENDER_ID", 12)
 
+# Emergency Paisa Lead Status API (Ep_Lead_Status.pdf)
+# GET /api/v1/open-partners/lead-status?leadid=…
+# Headers: Authorization: Bearer <token>, Referer
+EMERGENCY_PAISA_BASE_URL = (
+    _env("EMERGENCY_PAISA_BASE_URL") or "https://journey.crmpaisa.com"
+).rstrip("/")
+EMERGENCY_PAISA_PARTNER_TOKEN = _env(
+    "EMERGENCY_PAISA_PARTNER_TOKEN",
+    "b565ec70a756d0492791c6ca41866e59417ba4592c5588d8747df8b389c25b8b",
+)
+EMERGENCY_PAISA_REFERER = _env(
+    "EMERGENCY_PAISA_REFERER",
+    "https://emergencypaisa.com",
+)
+EMERGENCY_PAISA_STATUS_PATH = _env(
+    "EMERGENCY_PAISA_STATUS_PATH",
+    "/api/v1/open-partners/lead-status",
+)
+EMERGENCY_PAISA_STATUS_API_URL = _env("EMERGENCY_PAISA_STATUS_API_URL") or (
+    f"{EMERGENCY_PAISA_BASE_URL}{EMERGENCY_PAISA_STATUS_PATH}"
+)
+EMERGENCY_PAISA_LENDER_ID = _env_int("EMERGENCY_PAISA_LENDER_ID", 3)
+
 # Ram Fincorp Status API (aligns with mf-api RAM_FINCORP_* env names)
 RAMFINCORP_BASE_URL = (
     _env("RAM_FINCORP_BASE_URL")

@@ -41,6 +41,14 @@ LENDER_CONFIGS = [
     {"lender_id": 4, "status_column": "Status"},
     {"lender_id": 7, "status_column": "currentStatus"},
     {"lender_id": 8, "status_column": "Loan Status"},
+    {"lender_id": 5, "status_column": "Status"},
+    {"lender_id": 6, "status_column": "Status"},
+    {"lender_id": 9, "status_column": "Status"},
+    {"lender_id": 10, "status_column": "Status"},
+    {"lender_id": 11, "status_column": "Status"},
+    {"lender_id": 12, "status_column": "Status"},
+    {"lender_id": 13, "status_column": "Status"},
+    {"lender_id": 14, "status_column": "Status"},
 ]
 
 # Same lender, different product lines — try both IDs when matching leads/BRE.

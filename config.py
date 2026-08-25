@@ -90,6 +90,14 @@ CASHE_STATUS_PATH = _env("CASHE_STATUS_PATH", "/partner/customer_status")
 CASHE_STATUS_API_URL = _env("CASHE_STATUS_API_URL") or (
     f"{CASHE_BASE_URL}{CASHE_STATUS_PATH}"
 )
+CASHE_PREAPPROVAL_PATH = _env(
+    "CASHE_PREAPPROVAL_PATH",
+    "/report/getLoanApprovalDetails",
+)
+CASHE_PREAPPROVAL_API_URL = _env("CASHE_PREAPPROVAL_API_URL") or (
+    f"{CASHE_BASE_URL}{CASHE_PREAPPROVAL_PATH}"
+)
+CASHE_LENDER_ID = _env_int("CASHE_LENDER_ID", 11)
 
 # Toofan Loan Marketplace Aggregator Status API
 # Guide: Marketplace_Aggregator_Integration_Guide.pdf — POST /status

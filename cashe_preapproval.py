@@ -75,7 +75,6 @@ USER_SELECT = """
     u.mobile,
     u.pan,
     u.dob,
-    u.gender,
     u.monthly_income,
     u.employment_type,
     u.salary_mode,

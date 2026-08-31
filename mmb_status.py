@@ -12,6 +12,7 @@ from config import (
     MMB_MERCHANT_ID,
     db_config,
 )
+from mf_disbursals_store import apply_status_update
 
 MYSQL_CONFIG = db_config()
 MMB_LENDER_ID = 10
@@ -21,6 +22,8 @@ LEADS_QUERY = """
 SELECT
     lm.id,
     lm.user_id,
+    lm.application_id,
+    lm.lender_id,
     u.mobile
 FROM lead_master AS lm
 JOIN mf_users AS u ON u.id = lm.user_id
@@ -95,22 +98,28 @@ def extract_status_payload(response_body):
     return None
 
 
-def update_lead_in_mysql(lead_id, disburse_status, disburse_amount, disburse_datetime):
+def update_lead_in_mysql(
+    lead_id,
+    disburse_status,
+    disburse_amount,
+    disburse_datetime,
+    *,
+    user_id=None,
+    application_id=None,
+    lender_id=None,
+):
     conn = pymysql.connect(**MYSQL_CONFIG)
     try:
-        with conn.cursor() as cursor:
-            cursor.execute(
-                """
-                UPDATE lead_master
-                SET disburse_status = %s,
-                    disburse_amount = %s,
-                    disburse_datetime = %s,
-                    disbursal_status_check = NOW()
-                WHERE id = %s
-                """,
-                (disburse_status, disburse_amount, disburse_datetime, lead_id),
-            )
-        conn.commit()
+        return apply_status_update(
+            conn,
+            lead_id=lead_id,
+            disburse_status=disburse_status,
+            disburse_amount=disburse_amount,
+            disburse_datetime=disburse_datetime,
+            user_id=user_id,
+            application_id=application_id,
+            lender_id=lender_id if lender_id is not None else MMB_LENDER_ID,
+        )
     except Exception:
         conn.rollback()
         raise
@@ -125,6 +134,7 @@ def process_mmb_statuses():
     updated_count = 0
     skipped_count = 0
     failed_count = 0
+    disbursals_count = 0
 
     for lead in leads:
         lead_id = lead["id"]
@@ -154,11 +164,14 @@ def process_mmb_statuses():
             )
             disburse_datetime = normalize_value(item.get("disbursement_date"))
 
-            update_lead_in_mysql(
+            result = update_lead_in_mysql(
                 lead_id,
                 disburse_status,
                 disburse_amount,
                 disburse_datetime,
+                user_id=user_id,
+                application_id=lead.get("application_id"),
+                lender_id=lead.get("lender_id") or MMB_LENDER_ID,
             )
             updated_count += 1
             print(
@@ -166,6 +179,13 @@ def process_mmb_statuses():
                 f"disburse_amount={disburse_amount}, "
                 f"disburse_datetime={disburse_datetime}"
             )
+            if result.get("disbursal"):
+                disbursals_count += 1
+                print(
+                    f"  mf_disbursals {result['disbursal']}: "
+                    f"application_id={result.get('application_id')}, "
+                    f"lender_id={result.get('lender_id')}"
+                )
         except Exception as exc:
             failed_count += 1
             print(f"  Failed: {exc}", file=sys.stderr)
@@ -174,7 +194,8 @@ def process_mmb_statuses():
 
     print()
     print(
-        f"Done. Updated={updated_count}, Skipped={skipped_count}, Failed={failed_count}"
+        f"Done. Updated={updated_count}, Skipped={skipped_count}, "
+        f"Failed={failed_count}, mf_disbursals={disbursals_count}"
     )
 
 

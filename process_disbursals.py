@@ -27,6 +27,13 @@ from config import (
     SMTP_USER,
     db_config,
 )
+from mf_disbursals_store import (
+    DISBURSED_STATUSES,
+    is_disbursed_status,
+    normalize_amount,
+    normalize_disbursal_date,
+    upsert_mf_disbursal,
+)
 
 S3_BUCKET = S3_BUCKET_LENDER_REPORTS
 DB_CONFIG = db_config()
@@ -69,13 +76,6 @@ DEFAULT_APP_ID_COLUMNS = (
 DEFAULT_AMOUNT_COLUMNS = ("Dis Amt", "Disbursed Amount", "dis_amt", "Amount")
 DEFAULT_DATE_COLUMNS = ("Dis Date", "Disbursement Date", "dis_date", "Disbursed Date")
 
-# Case-insensitive disbursed statuses.
-DISBURSED_STATUSES = frozenset(
-    {
-        "disbursed",
-        "approved process",
-    }
-)
 
 
 def file_prefix_for_lender(lender_id):
@@ -176,38 +176,6 @@ def normalize_status(value):
     if not text or text.lower() in {"nan", "none", "null"}:
         return None
     return text
-
-
-def normalize_amount(value):
-    if value is None:
-        return None
-    text = str(value).strip()
-    if not text or text.lower() in {"nan", "none", "null", "na"}:
-        return None
-    text = text.replace(",", "")
-    return text[:15]
-
-
-def normalize_disbursal_date(value):
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        return value.date()
-    if isinstance(value, date):
-        return value
-    text = str(value).strip()
-    if not text or text.lower() in {"nan", "none", "null", "na"}:
-        return None
-    for fmt in ("%d-%m-%Y", "%Y-%m-%d", "%d/%m/%Y", "%Y/%m/%d", "%d-%m-%y", "%d/%m/%y"):
-        try:
-            return datetime.strptime(text[:10], fmt).date()
-        except ValueError:
-            continue
-    return None
-
-
-def is_disbursed_status(status):
-    return str(status or "").strip().lower() in DISBURSED_STATUSES
 
 
 def is_empty_criteria_missed(value):
@@ -449,42 +417,6 @@ def update_lead_disburse_status_by_id(cursor, lead_id, disburse_status):
         (disburse_status, lead_id),
     )
     return cursor.rowcount
-
-
-def upsert_mf_disbursal(cursor, user_id, application_id, lender_id, d_status, d_amount, d_date):
-    cursor.execute(
-        """
-        SELECT id
-        FROM mf_disbursals
-        WHERE application_id = %s
-          AND lender_id = %s
-        LIMIT 1
-        """,
-        (application_id, lender_id),
-    )
-    existing = cursor.fetchone()
-    if existing:
-        cursor.execute(
-            """
-            UPDATE mf_disbursals
-            SET user_id = COALESCE(%s, user_id),
-                d_status = COALESCE(%s, d_status),
-                d_amount = COALESCE(%s, d_amount),
-                d_date = COALESCE(%s, d_date)
-            WHERE id = %s
-            """,
-            (user_id, d_status, d_amount, d_date, existing["id"]),
-        )
-        return "updated"
-    cursor.execute(
-        """
-        INSERT INTO mf_disbursals
-            (user_id, application_id, lender_id, d_status, d_amount, d_date)
-        VALUES (%s, %s, %s, %s, %s, %s)
-        """,
-        (user_id, application_id, lender_id, d_status, d_amount, d_date),
-    )
-    return "inserted"
 
 
 def sync_file_rows(status_rows, preferred_lender_id):

@@ -1,12 +1,15 @@
-"""Email users who were eligible for a lender in the last N days but were not redirected.
+"""Email users who were eligible for a lender on selected past days but not redirected.
+
+Default target days (no args): D-1, D-2, D-3, D-5, D-7, D-10, D-15
+  (today excluded; those exact calendar days only)
 
 UTM (lender_type=2):
   A = application_bre_logs (ClickHouse) with empty criteria_missed,
-      created in [today-N, today-1]
+      created on the target dates
   B = mf_lender_rediections_stats (MySQL) for that lender
 
 API (lender_type=1):
-  A = lead_master (MySQL) with status=1, created in [today-N, today-1]
+  A = lead_master (MySQL) with status=1, created on the target dates
   B = mf_lender_rediections_stats (MySQL) for that lender
 
 For Ram Fincorp lender_ids (1, 7), also exclude users who already have
@@ -14,11 +17,12 @@ mf_disbursals.d_status in (Success, DISBURSED) — case-insensitive — for
 either lender_id 1 or 7.
 
 Target apps = A - B (- disbursed users for 1/7).
-Personalized Pepipost email per (lender, application).
+Personalized Pepipost email per (lender, user) — one email even if the
+user has multiple eligible apps for that lender (uses latest app for URL/amount).
 
 Usage:
-  python3 eligible_not_redirected_email.py          # default n=1 (yesterday)
-  python3 eligible_not_redirected_email.py -n 7     # last 7 past days
+  python3 eligible_not_redirected_email.py          # D-1,2,3,5,7,10,15
+  python3 eligible_not_redirected_email.py -n 7     # continuous last 7 past days
 """
 
 import argparse
@@ -61,6 +65,9 @@ OFFER_FACTOR_MIN = 0.55
 OFFER_FACTOR_MAX = 0.85
 OFFER_AMOUNT_MIN = 1500
 OFFER_AMOUNT_MAX = 80000
+
+# Default: exact past days relative to today (D-1 … D-15 subset).
+DEFAULT_DAY_OFFSETS = (1, 2, 3, 5, 7, 10, 15)
 
 # Ram Fincorp product lines — also exclude already-disbursed users via mf_disbursals.
 DISBURSAL_EXCLUDE_LENDER_IDS = (1, 7)
@@ -239,6 +246,7 @@ def fetch_lenders(mysql_conn):
             """
             SELECT id, lender_name, product_offering, lender_type
             FROM mf_lenders
+            WHERE status = 1
             ORDER BY id
             """
         )
@@ -277,41 +285,41 @@ def format_offer_expiry_date():
     return (date.today() + timedelta(days=7)).strftime("%d %b %Y")
 
 
-def fetch_utm_eligible_application_ids(ch_client, lender_id, start_date, end_date):
+def fetch_utm_eligible_application_ids(ch_client, lender_id, target_dates):
+    if not target_dates:
+        return set()
+    date_literals = ", ".join(f"toDate('{d.isoformat()}')" for d in target_dates)
     query = f"""
         SELECT DISTINCT application_id
         FROM application_bre_logs
         WHERE lender_id = {{lender_id:UInt64}}
-          AND toDate(created) >= {{start_date:Date}}
-          AND toDate(created) <= {{end_date:Date}}
+          AND toDate(created) IN ({date_literals})
           AND replaceRegexpAll(trimBoth(ifNull(criteria_missed, '')), '\\s', '')
               IN ('{{}}', '[]', '')
     """
     result = ch_client.query(
         query,
-        parameters={
-            "lender_id": int(lender_id),
-            "start_date": start_date.isoformat(),
-            "end_date": end_date.isoformat(),
-        },
+        parameters={"lender_id": int(lender_id)},
     )
     return {int(row[0]) for row in result.result_rows if row[0] is not None}
 
 
-def fetch_api_eligible_application_ids(mysql_conn, lender_id, start_date, end_date):
+def fetch_api_eligible_application_ids(mysql_conn, lender_id, target_dates):
+    if not target_dates:
+        return set()
+    placeholders = ", ".join(["%s"] * len(target_dates))
     with mysql_conn.cursor() as cursor:
         cursor.execute(
-            """
+            f"""
             SELECT DISTINCT application_id
             FROM lead_master
             WHERE lender_id = %s
               AND status = 1
               AND application_id IS NOT NULL
               AND application_id != 0
-              AND DATE(created) >= %s
-              AND DATE(created) <= %s
+              AND DATE(created) IN ({placeholders})
             """,
-            (lender_id, start_date, end_date),
+            (lender_id, *target_dates),
         )
         return {int(row["application_id"]) for row in cursor.fetchall()}
 
@@ -442,7 +450,7 @@ def send_email_via_pepipost(to_email, subject, html_body):
     return mail_send_controller.create_generatethemailsendrequest(body)
 
 
-def collect_eligible_not_redirected(mysql_conn, ch_client, start_date, end_date):
+def collect_eligible_not_redirected(mysql_conn, ch_client, target_dates):
     """Return list of {lender_id, lender_name, application_id} for A - B."""
     lenders = fetch_lenders(mysql_conn)
     targets = []
@@ -461,10 +469,10 @@ def collect_eligible_not_redirected(mysql_conn, ch_client, start_date, end_date)
     )
 
     print(f"Loaded {len(lenders)} lender(s)")
-    if start_date == end_date:
-        print(f"Target date: {start_date}")
-    else:
-        print(f"Target date range: {start_date} → {end_date}")
+    print(
+        "Target dates: "
+        + ", ".join(d.isoformat() for d in target_dates)
+    )
     print()
 
     for lender in lenders:
@@ -478,11 +486,11 @@ def collect_eligible_not_redirected(mysql_conn, ch_client, start_date, end_date)
 
         if lender_type == LENDER_TYPE_UTM:
             eligible_ids = fetch_utm_eligible_application_ids(
-                ch_client, lender_id, start_date, end_date
+                ch_client, lender_id, target_dates
             )
         elif lender_type == LENDER_TYPE_API:
             eligible_ids = fetch_api_eligible_application_ids(
-                mysql_conn, lender_id, start_date, end_date
+                mysql_conn, lender_id, target_dates
             )
         else:
             print(
@@ -521,13 +529,21 @@ def collect_eligible_not_redirected(mysql_conn, ch_client, start_date, end_date)
 
 
 def build_send_jobs(targets, details_by_app, disbursed_user_ids=None):
+    """Build one email job per (lender_id, user_id).
+
+    If a user has multiple eligible apps for the same lender, keep the
+    latest application_id for offer amount + Trackier p1.
+    """
     jobs = []
     skipped_no_email = 0
     skipped_missing_app = 0
     skipped_disbursed_user = 0
+    skipped_duplicate_user = 0
     expiry_date = format_offer_expiry_date()
     disbursed_user_ids = disbursed_user_ids or set()
 
+    # Prefer highest application_id when collapsing to lender <> user.
+    best_by_lender_user = {}
     for target in targets:
         application_id = target["application_id"]
         detail = details_by_app.get(application_id)
@@ -536,10 +552,15 @@ def build_send_jobs(targets, details_by_app, disbursed_user_ids=None):
             continue
 
         user_id = detail.get("user_id")
+        if user_id is None:
+            skipped_missing_app += 1
+            continue
+        user_id = int(user_id)
+        lender_id = int(target["lender_id"])
+
         if (
-            int(target["lender_id"]) in DISBURSAL_EXCLUDE_LENDER_IDS
-            and user_id is not None
-            and int(user_id) in disbursed_user_ids
+            lender_id in DISBURSAL_EXCLUDE_LENDER_IDS
+            and user_id in disbursed_user_ids
         ):
             skipped_disbursed_user += 1
             continue
@@ -549,6 +570,25 @@ def build_send_jobs(targets, details_by_app, disbursed_user_ids=None):
             skipped_no_email += 1
             continue
 
+        key = (lender_id, user_id)
+        existing = best_by_lender_user.get(key)
+        if existing is not None:
+            skipped_duplicate_user += 1
+            if application_id <= existing["application_id"]:
+                continue
+
+        best_by_lender_user[key] = {
+            "target": target,
+            "detail": detail,
+            "application_id": application_id,
+            "user_id": user_id,
+            "email": email,
+        }
+
+    for item in best_by_lender_user.values():
+        target = item["target"]
+        detail = item["detail"]
+        application_id = item["application_id"]
         lendername = target["lender_name"]
         name = format_user_name(detail.get("name"))
         offer_amount = format_offer_amount(detail.get("loan_amount"))
@@ -566,8 +606,8 @@ def build_send_jobs(targets, details_by_app, disbursed_user_ids=None):
 
         jobs.append(
             {
-                "email": email,
-                "user_id": detail.get("user_id"),
+                "email": item["email"],
+                "user_id": item["user_id"],
                 "application_id": application_id,
                 "lender_id": target["lender_id"],
                 "lender_name": lendername,
@@ -579,7 +619,19 @@ def build_send_jobs(targets, details_by_app, disbursed_user_ids=None):
             }
         )
 
-    return jobs, skipped_no_email, skipped_missing_app, skipped_disbursed_user
+    jobs.sort(
+        key=lambda job: (
+            int(job["lender_id"]),
+            int(job["user_id"]),
+        )
+    )
+    return (
+        jobs,
+        skipped_no_email,
+        skipped_missing_app,
+        skipped_disbursed_user,
+        skipped_duplicate_user,
+    )
 
 
 def build_lender_stats(sent_jobs):
@@ -615,7 +667,7 @@ def insert_campaign_record(mysql_conn, submitted_count, stats):
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         description=(
-            "Email users eligible for a lender in the last N days "
+            "Email users eligible for a lender on selected past days "
             "but not redirected"
         )
     )
@@ -623,35 +675,40 @@ def parse_args(argv=None):
         "-n",
         "--days",
         type=int,
-        default=1,
+        default=None,
         metavar="N",
         help=(
-            "Number of past days to consider, ending yesterday "
-            "(default: 1 = yesterday only)"
+            "Optional continuous lookback of last N past days "
+            f"(default: exact offsets {list(DEFAULT_DAY_OFFSETS)})"
         ),
     )
     args = parser.parse_args(argv)
-    if args.days < 1:
+    if args.days is not None and args.days < 1:
         parser.error("-n/--days must be >= 1")
     return args
 
 
-def resolve_date_range(days):
-    """Return [start_date, end_date] covering the last N past days (excl. today)."""
-    end_date = date.today() - timedelta(days=1)
-    start_date = date.today() - timedelta(days=days)
-    return start_date, end_date
+def resolve_target_dates(days=None):
+    """Return sorted target dates.
+
+    Default: exact D-1, D-2, D-3, D-5, D-7, D-10, D-15.
+    With -n N: continuous [today-N … today-1].
+    """
+    today = date.today()
+    if days is None:
+        return sorted(today - timedelta(days=offset) for offset in DEFAULT_DAY_OFFSETS)
+    return sorted(today - timedelta(days=offset) for offset in range(1, days + 1))
 
 
 def process_eligible_not_redirected_emails(argv=None):
     args = parse_args(argv)
-    start_date, end_date = resolve_date_range(args.days)
+    target_dates = resolve_target_dates(args.days)
     mysql_conn = pymysql.connect(**MYSQL_CONFIG)
     ch_client = get_clickhouse_client()
 
     try:
         targets, disbursed_user_ids = collect_eligible_not_redirected(
-            mysql_conn, ch_client, start_date, end_date
+            mysql_conn, ch_client, target_dates
         )
         print()
         print(f"Total eligible-not-redirected lender/app pairs: {len(targets)}")
@@ -663,12 +720,14 @@ def process_eligible_not_redirected_emails(argv=None):
             skipped_no_email,
             skipped_missing_app,
             skipped_disbursed_user,
+            skipped_duplicate_user,
         ) = build_send_jobs(targets, details_by_app, disbursed_user_ids)
         print(
             f"Emails to send: {len(jobs)} "
             f"(skipped missing email={skipped_no_email}, "
             f"missing application/user={skipped_missing_app}, "
-            f"disbursed users={skipped_disbursed_user})"
+            f"disbursed users={skipped_disbursed_user}, "
+            f"duplicate lender/user apps={skipped_duplicate_user})"
         )
 
         if not jobs:
@@ -681,6 +740,7 @@ def process_eligible_not_redirected_emails(argv=None):
                 print(
                     f"  would send → {job['email']} | "
                     f"lender={job['lender_name']} | "
+                    f"user_id={job['user_id']} | "
                     f"name={job['name']} | "
                     f"offer=₹{job['offer_amount']} | "
                     f"url={job['offer_url']} | "
@@ -695,6 +755,7 @@ def process_eligible_not_redirected_emails(argv=None):
             print(
                 f"Sending to {send_to} "
                 f"(lender={job['lender_name']}, "
+                f"user_id={job['user_id']}, "
                 f"app={job['application_id']}, "
                 f"offer=₹{job['offer_amount']}, "
                 f"url={job['offer_url']})..."

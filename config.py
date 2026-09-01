@@ -165,6 +165,21 @@ EMERGENCY_PAISA_STATUS_API_URL = _env("EMERGENCY_PAISA_STATUS_API_URL") or (
 )
 EMERGENCY_PAISA_LENDER_ID = _env_int("EMERGENCY_PAISA_LENDER_ID", 3)
 
+# RupeeDhan Lead Status API
+# GET /lead/status?mobile=… — header: x-api-key
+RUPEEDHAN_BASE_URL = (
+    _env("RUPEEDHAN_BASE_URL") or "https://api-backend.rupeedhan.com"
+).rstrip("/")
+RUPEEDHAN_API_KEY = _env(
+    "RUPEEDHAN_API_KEY",
+    "rd_partner_2d4c5703c3a055aa",
+)
+RUPEEDHAN_STATUS_PATH = _env("RUPEEDHAN_STATUS_PATH", "/lead/status")
+RUPEEDHAN_STATUS_API_URL = _env("RUPEEDHAN_STATUS_API_URL") or (
+    f"{RUPEEDHAN_BASE_URL}{RUPEEDHAN_STATUS_PATH}"
+)
+RUPEEDHAN_LENDER_ID = _env_int("RUPEEDHAN_LENDER_ID", 14)
+
 # Ram Fincorp Status API (aligns with mf-api RAM_FINCORP_* env names)
 RAMFINCORP_BASE_URL = (
     _env("RAM_FINCORP_BASE_URL")

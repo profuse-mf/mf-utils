@@ -17,8 +17,9 @@ mf_disbursals.d_status in (Success, DISBURSED) — case-insensitive — for
 either lender_id 1 or 7.
 
 Target apps = A - B (- disbursed users for 1/7).
-Personalized Pepipost email per (lender, user) — one email even if the
-user has multiple eligible apps for that lender (uses latest app for URL/amount).
+Personalized Pepipost email — at most one email per user. If a user is
+eligible for multiple lenders/apps, keep the lowest lender_id and the
+latest application_id for that lender (URL/amount).
 
 Usage:
   python3 eligible_not_redirected_email.py          # D-1,2,3,5,7,10,15
@@ -54,6 +55,7 @@ from config import (
     PEPIPOST_FROM_NAME,
     db_config,
 )
+from mf_user_crypto import sql_aes_decrypt
 
 MYSQL_CONFIG = db_config()
 LENDER_TYPE_API = 1
@@ -393,12 +395,15 @@ def fetch_application_user_details(mysql_conn, application_ids):
                 am.id AS application_id,
                 am.userid AS user_id,
                 am.loan_amount,
-                u.email,
+                {email_col},
                 u.name
             FROM application_master AS am
             JOIN mf_users AS u ON u.id = am.userid
             WHERE am.id IN ({placeholders})
-            """,
+            """.format(
+                email_col=sql_aes_decrypt("u.email", "email"),
+                placeholders=placeholders,
+            ),
             tuple(application_ids),
         )
         return {int(row["application_id"]): row for row in cursor.fetchall()}
@@ -529,10 +534,10 @@ def collect_eligible_not_redirected(mysql_conn, ch_client, target_dates):
 
 
 def build_send_jobs(targets, details_by_app, disbursed_user_ids=None):
-    """Build one email job per (lender_id, user_id).
+    """Build at most one email job per user_id.
 
-    If a user has multiple eligible apps for the same lender, keep the
-    latest application_id for offer amount + Trackier p1.
+    If a user qualifies for multiple lenders/apps, keep the lowest lender_id
+    and the latest application_id for that lender (offer amount + Trackier p1).
     """
     jobs = []
     skipped_no_email = 0
@@ -542,8 +547,7 @@ def build_send_jobs(targets, details_by_app, disbursed_user_ids=None):
     expiry_date = format_offer_expiry_date()
     disbursed_user_ids = disbursed_user_ids or set()
 
-    # Prefer highest application_id when collapsing to lender <> user.
-    best_by_lender_user = {}
+    best_by_user = {}
     for target in targets:
         application_id = target["application_id"]
         detail = details_by_app.get(application_id)
@@ -570,14 +574,20 @@ def build_send_jobs(targets, details_by_app, disbursed_user_ids=None):
             skipped_no_email += 1
             continue
 
-        key = (lender_id, user_id)
-        existing = best_by_lender_user.get(key)
+        existing = best_by_user.get(user_id)
         if existing is not None:
             skipped_duplicate_user += 1
-            if application_id <= existing["application_id"]:
+            existing_lender_id = int(existing["target"]["lender_id"])
+            # Prefer lower lender_id; if same lender, prefer newer application.
+            if lender_id > existing_lender_id:
+                continue
+            if (
+                lender_id == existing_lender_id
+                and application_id <= existing["application_id"]
+            ):
                 continue
 
-        best_by_lender_user[key] = {
+        best_by_user[user_id] = {
             "target": target,
             "detail": detail,
             "application_id": application_id,
@@ -585,7 +595,7 @@ def build_send_jobs(targets, details_by_app, disbursed_user_ids=None):
             "email": email,
         }
 
-    for item in best_by_lender_user.values():
+    for item in best_by_user.values():
         target = item["target"]
         detail = item["detail"]
         application_id = item["application_id"]
@@ -619,12 +629,7 @@ def build_send_jobs(targets, details_by_app, disbursed_user_ids=None):
             }
         )
 
-    jobs.sort(
-        key=lambda job: (
-            int(job["lender_id"]),
-            int(job["user_id"]),
-        )
-    )
+    jobs.sort(key=lambda job: int(job["user_id"]))
     return (
         jobs,
         skipped_no_email,
@@ -727,7 +732,7 @@ def process_eligible_not_redirected_emails(argv=None):
             f"(skipped missing email={skipped_no_email}, "
             f"missing application/user={skipped_missing_app}, "
             f"disbursed users={skipped_disbursed_user}, "
-            f"duplicate lender/user apps={skipped_duplicate_user})"
+            f"duplicate users={skipped_duplicate_user})"
         )
 
         if not jobs:

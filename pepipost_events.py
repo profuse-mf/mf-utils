@@ -43,6 +43,7 @@ from config import (
     SMTP_USER,
     db_config,
 )
+from mf_user_crypto import sql_aes_decrypt, sql_aes_encrypt_param
 
 MYSQL_CONFIG = db_config()
 REQUEST_DELAY_SECONDS = 0.5
@@ -582,22 +583,24 @@ def collect_alert_email_addresses(summary):
 
 
 def blank_alert_emails_in_mf_users(conn, emails):
-    """SET email='' in mf_users for softbounce / hardbounce / unsubscribe addresses."""
+    """Blank email in mf_users for softbounce / hardbounce / unsubscribe addresses."""
     if not emails:
         print("No softbounce/hardbounce/unsubscribe emails to blank in mf_users")
         return 0
 
+    encrypt_expr = sql_aes_encrypt_param()
+    decrypt_expr = sql_aes_decrypt("email")
     updated = 0
     with conn.cursor() as cursor:
         for email in emails:
             cursor.execute(
-                """
+                f"""
                 UPDATE mf_users
-                SET email = ''
-                WHERE email = %s
-                  AND TRIM(IFNULL(email, '')) != ''
+                SET email = {encrypt_expr}
+                WHERE {decrypt_expr} = %s
+                  AND TRIM(IFNULL({decrypt_expr}, '')) != ''
                 """,
-                (email,),
+                ("", email),
             )
             updated += cursor.rowcount
     conn.commit()

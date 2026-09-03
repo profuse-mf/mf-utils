@@ -12,6 +12,7 @@ from pepipost.models.type_enum import TypeEnum
 from pepipost.pepipost_client import PepipostClient
 
 from config import PEPIPOST_API_KEY, PEPIPOST_FROM_EMAIL, PEPIPOST_FROM_NAME, db_config
+from mf_user_crypto import sql_aes_decrypt
 
 FROM_EMAIL = PEPIPOST_FROM_EMAIL
 FROM_NAME = PEPIPOST_FROM_NAME
@@ -59,12 +60,12 @@ def fetch_recent_complete_users():
         with conn.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, email, created
+                SELECT id, {email_col}, created
                 FROM mf_users
                 WHERE status = 1
                 ORDER BY id DESC
                 LIMIT 100
-                """
+                """.format(email_col=sql_aes_decrypt("email", "email")),
             )
             return cursor.fetchall()
     finally:

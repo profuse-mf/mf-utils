@@ -13,18 +13,19 @@ from config import (
     db_config,
 )
 from mf_disbursals_store import apply_status_update
+from mf_user_crypto import sql_aes_decrypt
 
 MYSQL_CONFIG = db_config()
 MMB_LENDER_ID = 10
 STALE_DAYS = 30
 
-LEADS_QUERY = """
+LEADS_QUERY = f"""
 SELECT
     lm.id,
     lm.user_id,
     lm.application_id,
     lm.lender_id,
-    u.mobile
+    {sql_aes_decrypt("u.mobile", "mobile")}
 FROM lead_master AS lm
 JOIN mf_users AS u ON u.id = lm.user_id
 WHERE lm.lender_id = %s

@@ -42,6 +42,7 @@ from config import (
     CASHE_PREAPPROVAL_API_URL,
     db_config,
 )
+from mf_user_crypto import sql_aes_decrypt, sql_aes_decrypt_not_empty
 
 MYSQL_CONFIG = db_config()
 REQUEST_DELAY_SECONDS = 1
@@ -68,12 +69,12 @@ CREATE TABLE IF NOT EXISTS mf_cashe_preapprovals (
 )
 """
 
-USER_SELECT = """
+USER_SELECT = f"""
     u.id AS user_id,
     u.name,
-    u.email,
-    u.mobile,
-    u.pan,
+    {sql_aes_decrypt("u.email", "email")},
+    {sql_aes_decrypt("u.mobile", "mobile")},
+    {sql_aes_decrypt("u.pan", "pan")},
     u.dob,
     u.monthly_income,
     u.employment_type,
@@ -323,8 +324,8 @@ def fetch_users_batch(conn, limit=0):
                    LIMIT 1
                ) AS loan_amount
         FROM mf_users AS u
-        WHERE u.pan IS NOT NULL AND TRIM(u.pan) != ''
-          AND u.mobile IS NOT NULL AND TRIM(u.mobile) != ''
+        WHERE {sql_aes_decrypt_not_empty("u.pan")}
+          AND {sql_aes_decrypt_not_empty("u.mobile")}
         ORDER BY u.id
     """
     if limit and limit > 0:
@@ -371,8 +372,8 @@ def fetch_users_by_recent_apps(conn, days, limit=0):
         FROM application_master AS am
         JOIN mf_users AS u ON u.id = am.userid
         WHERE am.created >= NOW() - INTERVAL %s DAY
-          AND u.pan IS NOT NULL AND TRIM(u.pan) != ''
-          AND u.mobile IS NOT NULL AND TRIM(u.mobile) != ''
+          AND {sql_aes_decrypt_not_empty("u.pan")}
+          AND {sql_aes_decrypt_not_empty("u.mobile")}
         ORDER BY am.id DESC
     """
     params = [days]

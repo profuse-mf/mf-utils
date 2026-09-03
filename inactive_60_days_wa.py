@@ -18,6 +18,7 @@ import pymysql
 import requests
 
 from config import db_config
+from mf_user_crypto import sql_aes_decrypt
 
 MYSQL_CONFIG = db_config()
 
@@ -47,11 +48,11 @@ OFFER_AMOUNT_MIN = 1500
 OFFER_AMOUNT_MAX = 80000
 
 # Users who applied before, but whose latest application is older than 60 days.
-INACTIVE_USERS_QUERY = """
+INACTIVE_USERS_QUERY = f"""
 SELECT
     u.id AS user_id,
     u.name,
-    u.mobile,
+    {sql_aes_decrypt("u.mobile", "mobile")},
     last_app.id AS application_id,
     last_app.loan_amount,
     last_app.created AS last_application_created

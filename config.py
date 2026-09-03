@@ -309,3 +309,7 @@ def db_config(database=None, autocommit=None):
     if autocommit is not None:
         config["autocommit"] = autocommit
     return config
+
+
+# mf_users.mobile / email / pan are AES_ENCRYPT'd at rest (MySQL).
+MF_USERS_AES_KEY = _env("MF_USERS_AES_KEY", "tripleseven7")

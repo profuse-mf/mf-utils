@@ -27,6 +27,7 @@ from config import (
     db_config,
 )
 from mf_disbursals_store import apply_status_update
+from mf_user_crypto import sql_aes_decrypt
 
 MYSQL_CONFIG = db_config()
 STALE_DAYS = 30
@@ -45,7 +46,7 @@ SELECT
     lm.application_id,
     lm.lender_id,
     lm.lender_ref_id,
-    u.mobile
+    {mobile_col}
 FROM lead_master AS lm
 JOIN mf_users AS u ON u.id = lm.user_id
 WHERE lm.lender_id = %s
@@ -54,6 +55,7 @@ WHERE lm.lender_id = %s
   AND LOWER(TRIM(IFNULL(lm.disburse_status, ''))) NOT IN ({skip_placeholders})
 ORDER BY lm.id
 """.format(
+    mobile_col=sql_aes_decrypt("u.mobile", "mobile"),
     skip_placeholders=", ".join(["%s"] * len(SKIP_DISBURSE_STATUSES)),
 )
 

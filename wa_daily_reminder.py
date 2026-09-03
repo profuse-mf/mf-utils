@@ -4,6 +4,7 @@ import logging
 import time
 
 from config import WA_API_KEY, WA_API_URL, WA_TEMPLATE_ID, db_config
+from mf_user_crypto import sql_aes_decrypt
 
 DB_CONFIG = db_config(autocommit=False)
 API_URL = WA_API_URL
@@ -14,8 +15,8 @@ TEMPLATE_ID = WA_TEMPLATE_ID
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-QUERY = """
-SELECT id as userid, name, mobile
+QUERY = f"""
+SELECT id as userid, name, {sql_aes_decrypt("mobile", "mobile")}
 FROM mf_users
 WHERE status = 0
   AND created_date = CURDATE() - INTERVAL 1 DAY;

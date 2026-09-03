@@ -4,6 +4,7 @@ import logging
 import time
 
 from config import WA_API_KEY, WA_API_URL, WA_TEMPLATE_ID, db_config
+from mf_user_crypto import sql_aes_decrypt
 
 DB_CONFIG = db_config(autocommit=False)
 API_URL = WA_API_URL
@@ -14,8 +15,8 @@ TEMPLATE_ID = WA_TEMPLATE_ID
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-QUERY = """
-SELECT pu.userid, u.name, u.mobile
+QUERY = f"""
+SELECT pu.userid, u.name, {sql_aes_decrypt("u.mobile", "mobile")}
 FROM mf_users u
 JOIN mf_partial_users pu ON u.id = pu.userid
 WHERE pu.created < NOW() - INTERVAL 20 MINUTE;

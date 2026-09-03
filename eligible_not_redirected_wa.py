@@ -26,6 +26,7 @@ from config import (
     CLICKHOUSE_USER,
     db_config,
 )
+from mf_user_crypto import sql_aes_decrypt
 
 MYSQL_CONFIG = db_config()
 
@@ -221,12 +222,15 @@ def fetch_application_user_details(mysql_conn, application_ids):
                 am.userid AS user_id,
                 am.loan_amount,
                 am.created AS application_created,
-                u.mobile,
+                {mobile_col},
                 u.name
             FROM application_master AS am
             JOIN mf_users AS u ON u.id = am.userid
             WHERE am.id IN ({placeholders})
-            """,
+            """.format(
+                mobile_col=sql_aes_decrypt("u.mobile", "mobile"),
+                placeholders=placeholders,
+            ),
             tuple(application_ids),
         )
         return {int(row["application_id"]): row for row in cursor.fetchall()}

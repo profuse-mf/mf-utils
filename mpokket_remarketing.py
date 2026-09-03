@@ -10,6 +10,7 @@ from config import (
     mpokket_wa_settings,
     require_wa_config,
 )
+from mf_user_crypto import sql_aes_decrypt
 
 DB_CONFIG = db_config(autocommit=False)
 
@@ -20,13 +21,13 @@ HARDCODED_MOBILE = "8867188207"
 LEAD_LIMIT = 5
 STALE_DAYS = 15
 
-LEADS_QUERY = """
+LEADS_QUERY = f"""
 SELECT
     lm.application_id,
     lm.user_id,
     am.loan_amount,
     u.name,
-    u.mobile
+    {sql_aes_decrypt("u.mobile", "mobile")}
 FROM lead_master AS lm
 JOIN application_master AS am ON am.id = lm.application_id
 JOIN mf_users AS u ON u.id = lm.user_id

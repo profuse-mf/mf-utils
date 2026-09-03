@@ -14,6 +14,7 @@ from config import (
     DB_NAME,
     DB_PASSWORD,
     DB_USER,
+    MF_USERS_AES_KEY,
     MYSQL_PORT,
 )
 
@@ -30,6 +31,27 @@ def mysql_source(table_name):
         f"'{table_name}', "
         f"'{MYSQL_USER}', "
         f"'{MYSQL_PASSWORD}')"
+    )
+
+
+def _mysql_aes_key_hex():
+    """MySQL AES-128 key = UTF-8 key null-padded / truncated to 16 bytes."""
+    key_bytes = MF_USERS_AES_KEY.encode("utf-8")[:16].ljust(16, b"\x00")
+    return key_bytes.hex()
+
+
+def _ch_decrypt_mysql_aes(column):
+    """Decrypt MySQL AES_ENCRYPT blobs pulled via ClickHouse mysql() table fn."""
+    key_hex = _mysql_aes_key_hex()
+    return (
+        f"if(isNull({column}) OR toString({column}) = '', '', "
+        f"ifNull("
+        f"nullIf("
+        f"trim(BOTH char(0) FROM "
+        f"reinterpretAsString("
+        f"decrypt('aes-128-ecb', assumeNotNull({column}), unhex('{key_hex}'))"
+        f")), ''), "
+        f"''))"
     )
 
 
@@ -204,11 +226,11 @@ INSERT INTO mf_users
 )
 SELECT
     toUInt32(id),
-    ifNull(mobile, ''),
+    {_ch_decrypt_mysql_aes("mobile")},
     ifNull(name, ''),
-    ifNull(email, ''),
+    {_ch_decrypt_mysql_aes("email")},
     dob,
-    ifNull(pan, ''),
+    {_ch_decrypt_mysql_aes("pan")},
     ifNull(res_pincode, ''),
     toInt16(ifNull(res_type, 0)),
     ifNull(address, ''),

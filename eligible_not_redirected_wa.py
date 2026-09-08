@@ -1,10 +1,15 @@
 """WhatsApp users eligible for a lender yesterday but not redirected.
 
-Eligibility and lender URLs mirror eligible_not_redirected_email.py.
+Eligibility mirrors eligible_not_redirected_email.py.
 Only one message is sent per user:
   * if the user has multiple candidate applications, choose the second one
     in chronological order;
-  * for that application, choose the first lender by lender ID.
+  * for that application, choose the preferred lender by LENDER_PRIORITY
+    (else lowest lender_id).
+
+WA payload (template 1631082968807795):
+  placeholders = [Name, OfferAmount/- , LenderName]
+  button.url = mf_lenders.redirect_url for that lender_id
 """
 
 import json
@@ -32,16 +37,14 @@ MYSQL_CONFIG = db_config()
 
 WA_API_URL = "https://utilsapi.smsmsg.in/waba/sendmessage"
 WA_API_KEY = "e6eb44d10c5bea3233cf88e6dfa2b234"
-WA_TEMPLATE_ID = "1571984130956515"
+WA_TEMPLATE_ID = "1631082968807795"
 SEND_MESSAGES = True
 CAMPAIGN_CHANNEL = "WA"
 CAMPAIGN_NAME = "D-1 Remarketing"
 
 LENDER_TYPE_API = 1
 LENDER_TYPE_UTM = 2
-FALLBACK_OFFER_URL = "https://moneyfatafat.com"
-TRACKIER_PUB_ID = 218
-REMARKETING_SOURCE = "WA"
+FALLBACK_OFFER_URL = "https://moneyfatafat.com/contact"
 
 # Preferred lenders for the chosen application (by lender_id).
 # P1 Surya Loan, P2 mPokket, P3 Emergency Paisa; else lowest lender_id.
@@ -53,38 +56,9 @@ OFFER_AMOUNT_MIN = 1500
 OFFER_AMOUNT_MAX = 80000
 
 
-def _trackier_url(campaign_id):
-    return (
-        "https://profuse.gotrackier.com/click"
-        f"?campaign_id={campaign_id}&pub_id={TRACKIER_PUB_ID}"
-    )
-
-
-LENDER_REDIRECT_URLS = {
-    1: _trackier_url(211),  # Ram Fincorp
-    2: _trackier_url(210),  # Poonawalla Fincorp
-    3: _trackier_url(212),  # Emergency Paisa
-    4: _trackier_url(200),  # Salary Top Up
-    5: _trackier_url(134),  # Salary On Time
-    6: _trackier_url(187),  # Surya Loan
-    7: _trackier_url(211),  # Ram Fincorp (alternate product)
-    8: _trackier_url(210),  # Poonawalla Fincorp (alternate product)
-    9: _trackier_url(221),  # mPokket
-    10: "https://www.mymoneybazaar.com",  # My Money Bazaar
-    11: _trackier_url(227),  # CASHe
-    12: _trackier_url(235),  # CreditSea
-    13: _trackier_url(234),  # PayMe
-    14: _trackier_url(236),  # Rupeedhan
-}
-
-
-def resolve_offer_url(lender_id, application_id):
-    url = LENDER_REDIRECT_URLS.get(int(lender_id), FALLBACK_OFFER_URL)
-    separator = "&" if "?" in url else "?"
-    return (
-        f"{url}{separator}source={REMARKETING_SOURCE}"
-        f"&p1={application_id}"
-    )
+def resolve_offer_url(redirect_url):
+    url = (redirect_url or "").strip()
+    return url or FALLBACK_OFFER_URL
 
 
 def get_clickhouse_client():
@@ -101,8 +75,9 @@ def fetch_lenders(mysql_conn):
     with mysql_conn.cursor() as cursor:
         cursor.execute(
             """
-            SELECT id, lender_name, product_offering, lender_type
+            SELECT id, lender_name, product_offering, lender_type, redirect_url
             FROM mf_lenders
+            WHERE status = 1
             ORDER BY id
             """
         )
@@ -202,6 +177,7 @@ def collect_eligible_not_redirected(mysql_conn, ch_client, target_date):
                 {
                     "lender_id": lender_id,
                     "lender_name": lender_name,
+                    "redirect_url": (lender.get("redirect_url") or "").strip(),
                     "application_id": application_id,
                 }
             )
@@ -216,7 +192,7 @@ def fetch_application_user_details(mysql_conn, application_ids):
     placeholders = ", ".join(["%s"] * len(application_ids))
     with mysql_conn.cursor() as cursor:
         cursor.execute(
-            f"""
+            """
             SELECT
                 am.id AS application_id,
                 am.userid AS user_id,
@@ -238,11 +214,8 @@ def fetch_application_user_details(mysql_conn, application_ids):
 
 def format_user_name(name):
     if not name or not str(name).strip():
-        return "User,"
-    formatted = " ".join(
-        word.capitalize() for word in str(name).strip().split()
-    )
-    return f"{formatted},"
+        return "User"
+    return " ".join(word.capitalize() for word in str(name).strip().split())
 
 
 def format_phone(mobile):
@@ -268,7 +241,7 @@ def format_offer_amount(loan_amount):
     amount = max(OFFER_AMOUNT_MIN, min(OFFER_AMOUNT_MAX, amount))
     amount = int(round(amount / 1000) * 1000)
     amount = max(OFFER_AMOUNT_MIN, min(OFFER_AMOUNT_MAX, amount))
-    return f"{amount:,}"
+    return f"{amount:,}/-"
 
 
 def choose_lender_for_application(lender_targets):
@@ -332,6 +305,7 @@ def build_send_jobs(selected_targets):
             continue
 
         application_id = int(target["application_id"])
+        offer_url = resolve_offer_url(target.get("redirect_url"))
         jobs.append(
             {
                 "user_id": int(target["user_id"]),
@@ -341,9 +315,7 @@ def build_send_jobs(selected_targets):
                 "phone": phone,
                 "name": format_user_name(target.get("name")),
                 "offer_amount": format_offer_amount(target.get("loan_amount")),
-                "offer_url": resolve_offer_url(
-                    target["lender_id"], application_id
-                ),
+                "offer_url": offer_url,
             }
         )
 

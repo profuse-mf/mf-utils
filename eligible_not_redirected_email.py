@@ -390,7 +390,7 @@ def fetch_application_user_details(mysql_conn, application_ids):
     placeholders = ", ".join(["%s"] * len(application_ids))
     with mysql_conn.cursor() as cursor:
         cursor.execute(
-            f"""
+            """
             SELECT
                 am.id AS application_id,
                 am.userid AS user_id,

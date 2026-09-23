@@ -2,14 +2,15 @@
 
 Columns: user_id, application_id, lender_id, d_status, d_amount, d_date
 Dedupe: one row per (application_id, lender_id) — UPDATE if exists, else INSERT
-Gate: only write when d_status is a disbursed status (same set as process_disbursals)
+Gate: every status is written (no disbursed-only filter).
 """
 
 from __future__ import annotations
 
 from datetime import date, datetime
 
-# Case-insensitive disbursed statuses (must stay in sync with process_disbursals).
+# Used by process_disbursals reporting / "actual disbursals" sections only.
+# mf_disbursals writes are NOT gated on this set.
 DISBURSED_STATUSES = frozenset(
     {
         "disbursed",
@@ -97,12 +98,10 @@ def write_disbursal_if_qualified(
     d_amount=None,
     d_date=None,
 ):
-    """Write mf_disbursals only when status qualifies (same gate as process_disbursals).
+    """Upsert mf_disbursals for any status (no disbursed-only filter).
 
-    Returns 'inserted' | 'updated' | None (skipped).
+    Returns 'inserted' | 'updated' | None (skipped when keys missing).
     """
-    if not is_disbursed_status(d_status):
-        return None
     if application_id is None or lender_id is None:
         return None
     return upsert_mf_disbursal(
@@ -141,7 +140,7 @@ def apply_status_update(
     lender_id=None,
     lender_ref_id=None,
 ):
-    """Update lead_master disburse fields; upsert mf_disbursals when disbursed.
+    """Update lead_master disburse fields; upsert mf_disbursals for any status.
 
     Future lender status scripts should call this (or write_disbursal_if_qualified)
     so mf_disbursals stays consistent with process_disbursals.

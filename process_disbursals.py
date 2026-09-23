@@ -29,7 +29,6 @@ from config import (
 )
 from mf_disbursals_store import (
     DISBURSED_STATUSES,
-    is_disbursed_status,
     normalize_amount,
     normalize_disbursal_date,
     upsert_mf_disbursal,
@@ -458,22 +457,21 @@ def sync_file_rows(status_rows, preferred_lender_id):
                     )
                     updated_by_lender[matched_lender_id] += 1
 
-                # Insert even if Dis Date is empty — nullable fields stay NULL.
-                if is_disbursed_status(status):
-                    user_id = fetch_user_id_for_application(cursor, application_id)
-                    action = upsert_mf_disbursal(
-                        cursor,
-                        user_id=user_id,
-                        application_id=application_id,
-                        lender_id=matched_lender_id,
-                        d_status=status,
-                        d_amount=row.get("d_amount"),
-                        d_date=row.get("d_date"),
-                    )
-                    if action == "inserted":
-                        disbursals_inserted += 1
-                    else:
-                        disbursals_updated += 1
+                # Every status → mf_disbursals (even if Dis Date / amount empty).
+                user_id = fetch_user_id_for_application(cursor, application_id)
+                action = upsert_mf_disbursal(
+                    cursor,
+                    user_id=user_id,
+                    application_id=application_id,
+                    lender_id=matched_lender_id,
+                    d_status=status,
+                    d_amount=row.get("d_amount"),
+                    d_date=row.get("d_date"),
+                )
+                if action == "inserted":
+                    disbursals_inserted += 1
+                else:
+                    disbursals_updated += 1
 
             conn.commit()
     except Exception:

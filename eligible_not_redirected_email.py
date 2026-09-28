@@ -18,8 +18,9 @@ either lender_id 1 or 7.
 
 Target apps = A - B (- disbursed users for 1/7).
 Personalized Pepipost email — at most one email per user. If a user is
-eligible for multiple lenders/apps, keep the lowest lender_id and the
-latest application_id for that lender (URL/amount).
+eligible for multiple lenders/apps, prefer LENDER_PRIORITY (P1→P6);
+lenders not on that list fall back to lowest lender_id. For the chosen
+lender, use the latest application_id for URL/amount.
 
 Usage:
   python3 eligible_not_redirected_email.py          # D-1,2,3,5,7,10,15
@@ -29,6 +30,7 @@ Usage:
 import argparse
 import json
 import random
+import re
 import sys
 from collections import Counter
 from datetime import date, timedelta
@@ -74,6 +76,18 @@ DEFAULT_DAY_OFFSETS = (1, 2, 3, 5, 7, 10, 15)
 # Ram Fincorp product lines — also exclude already-disbursed users via mf_disbursals.
 DISBURSAL_EXCLUDE_LENDER_IDS = (1, 7)
 DISBURSAL_EXCLUDE_STATUSES = ("success", "disbursed")
+
+# Email lender priority when a user is eligible for multiple lenders (P1 highest).
+# Only status=1 lenders are loaded; names match mf_lenders.lender_name loosely.
+# Lenders not listed fall back to lowest lender_id.
+LENDER_PRIORITY = (
+    (14, ("rupeedhan",)),  # P1 Rupeedhan
+    (None, ("toofan",)),  # P2 Toofan (id may vary; match by name)
+    (12, ("creditsea",)),  # P3 CreditSea
+    (16, ("b4salary",)),  # P4 B4Salary
+    (18, ("actoloan",)),  # P5 Actoloan
+    (20, ("fastrupees", "fastrupee")),  # P6 Fast Rupees
+)
 
 
 def _trackier_url(campaign_id):
@@ -533,11 +547,35 @@ def collect_eligible_not_redirected(mysql_conn, ch_client, target_dates):
     return targets, disbursed_user_ids
 
 
+def normalize_lender_key(lender_name):
+    return re.sub(r"[^a-z0-9]", "", (lender_name or "").lower())
+
+
+def lender_priority_rank(lender_id, lender_name):
+    """Lower rank = higher priority. Unlisted lenders sort after P1–P6 by lender_id."""
+    key = normalize_lender_key(lender_name)
+    for index, (priority_id, names) in enumerate(LENDER_PRIORITY):
+        if priority_id is not None and int(lender_id) == int(priority_id):
+            return index
+        if any(name in key for name in names):
+            return index
+    return len(LENDER_PRIORITY) + int(lender_id)
+
+
+def lender_choice_sort_key(lender_id, lender_name, application_id):
+    """Prefer higher priority, then lower lender_id, then newer application."""
+    return (
+        lender_priority_rank(lender_id, lender_name),
+        int(lender_id),
+        -int(application_id),
+    )
+
+
 def build_send_jobs(targets, details_by_app, disbursed_user_ids=None):
     """Build at most one email job per user_id.
 
-    If a user qualifies for multiple lenders/apps, keep the lowest lender_id
-    and the latest application_id for that lender (offer amount + Trackier p1).
+    Multi-lender users: LENDER_PRIORITY (P1→P6) first; others by lowest
+    lender_id. Same lender: latest application_id for amount + Trackier p1.
     """
     jobs = []
     skipped_no_email = 0
@@ -561,6 +599,7 @@ def build_send_jobs(targets, details_by_app, disbursed_user_ids=None):
             continue
         user_id = int(user_id)
         lender_id = int(target["lender_id"])
+        lender_name = target.get("lender_name")
 
         if (
             lender_id in DISBURSAL_EXCLUDE_LENDER_IDS
@@ -574,17 +613,16 @@ def build_send_jobs(targets, details_by_app, disbursed_user_ids=None):
             skipped_no_email += 1
             continue
 
+        new_key = lender_choice_sort_key(lender_id, lender_name, application_id)
         existing = best_by_user.get(user_id)
         if existing is not None:
             skipped_duplicate_user += 1
-            existing_lender_id = int(existing["target"]["lender_id"])
-            # Prefer lower lender_id; if same lender, prefer newer application.
-            if lender_id > existing_lender_id:
-                continue
-            if (
-                lender_id == existing_lender_id
-                and application_id <= existing["application_id"]
-            ):
+            existing_key = lender_choice_sort_key(
+                int(existing["target"]["lender_id"]),
+                existing["target"].get("lender_name"),
+                existing["application_id"],
+            )
+            if new_key >= existing_key:
                 continue
 
         best_by_user[user_id] = {

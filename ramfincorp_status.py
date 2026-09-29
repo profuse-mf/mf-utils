@@ -296,6 +296,12 @@ def process_ramfincorp_statuses():
             disburse_amount = get_disburse_amount(item)
             disburse_datetime = get_disburse_datetime(item)
 
+            if str(disburse_status or "").strip().lower() == "success":
+                print("  Response (status=Success):")
+                print(
+                    f"    {json.dumps(response_body, ensure_ascii=False, default=str)}"
+                )
+
             result = update_lead_in_mysql(
                 lead_id,
                 disburse_status,

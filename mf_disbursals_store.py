@@ -3,11 +3,15 @@
 Columns: user_id, application_id, lender_id, d_status, d_amount, d_date
 Dedupe: one row per (application_id, lender_id) — UPDATE if exists, else INSERT
 Gate: every status is written (no disbursed-only filter).
+
+Also records lender status history/current via mf_lender_status_log.
 """
 
 from __future__ import annotations
 
 from datetime import date, datetime
+
+from mf_lender_status_log import record_lender_status
 
 # Used by process_disbursals reporting / "actual disbursals" sections only.
 # mf_disbursals writes are NOT gated on this set.
@@ -139,11 +143,12 @@ def apply_status_update(
     application_id=None,
     lender_id=None,
     lender_ref_id=None,
+    response_json=None,
+    # Ignored — accepted so older call sites that pass pending_step/etc. keep working.
+    pending_step=None,
+    status_detail=None,
 ):
-    """Update lead_master disburse fields; upsert mf_disbursals for any status.
-
-    Future lender status scripts should call this (or write_disbursal_if_qualified)
-    so mf_disbursals stays consistent with process_disbursals.
+    """Update lead_master, upsert mf_disbursals, and log raw status response_json.
     """
     with conn.cursor() as cursor:
         if user_id is None or application_id is None or lender_id is None:
@@ -197,10 +202,22 @@ def apply_status_update(
             d_date=disburse_datetime,
         )
 
+        status_log = record_lender_status(
+            cursor,
+            lead_id=lead_id,
+            application_id=application_id,
+            user_id=user_id,
+            lender_id=lender_id,
+            lender_ref_id=lender_ref_id,
+            status=disburse_status,
+            response_json=response_json,
+        )
+
     conn.commit()
     return {
         "user_id": user_id,
         "application_id": application_id,
         "lender_id": lender_id,
         "disbursal": disbursal_action,
+        "status_log_id": status_log.get("log_id"),
     }

@@ -188,13 +188,32 @@ def extract_status_payload(response_body):
 def get_disburse_status(item, response_body):
     step = item.get("step") if isinstance(item.get("step"), dict) else {}
     return normalize_value(
-        item.get("currentStatus")
+        item.get("currentLeadStatus")
+        or item.get("currentStatus")
         or item.get("status")
         or item.get("loan_status")
         or item.get("disburse_status")
         or step.get("step_name")
-        or response_body.get("message")
+        or item.get("currentIncompleteStep")
     )
+
+
+def get_pending_step(item):
+    pending = normalize_value(
+        item.get("currentIncompleteStep")
+        or item.get("current_incomplete_step")
+        or item.get("pendingStep")
+    )
+    if pending:
+        return pending
+    steps = item.get("customerStatuses") or item.get("customer_statuses") or []
+    if isinstance(steps, list):
+        for step in steps:
+            if not isinstance(step, dict):
+                continue
+            if str(step.get("status") or "").strip().upper() == "PENDING":
+                return normalize_value(step.get("stepName") or step.get("step_name"))
+    return None
 
 
 def get_disburse_amount(item):
@@ -226,6 +245,8 @@ def update_lead_in_mysql(
     user_id=None,
     application_id=None,
     lender_id=None,
+    pending_step=None,
+    response_json=None,
 ):
     conn = pymysql.connect(**MYSQL_CONFIG)
     try:
@@ -238,6 +259,8 @@ def update_lead_in_mysql(
             user_id=user_id,
             application_id=application_id,
             lender_id=lender_id,
+            pending_step=pending_step,
+            response_json=response_json,
         )
     except Exception:
         conn.rollback()
@@ -295,6 +318,7 @@ def process_ramfincorp_statuses():
             disburse_status = get_disburse_status(item, response_body)
             disburse_amount = get_disburse_amount(item)
             disburse_datetime = get_disburse_datetime(item)
+            pending_step = get_pending_step(item)
 
             if str(disburse_status or "").strip().lower() == "success":
                 print("  Response (status=Success):")
@@ -310,13 +334,18 @@ def process_ramfincorp_statuses():
                 user_id=user_id,
                 application_id=lead.get("application_id"),
                 lender_id=lender_id,
+                pending_step=pending_step,
+                response_json=response_body,
             )
             updated_count += 1
             print(
                 f"  Updated: disburse_status={disburse_status}, "
+                f"pending_step={pending_step}, "
                 f"disburse_amount={disburse_amount}, "
                 f"disburse_datetime={disburse_datetime}"
             )
+            if result.get("status_log_id"):
+                print(f"  status_log id={result.get('status_log_id')}")
             if result.get("disbursal"):
                 disbursals_count += 1
                 print(

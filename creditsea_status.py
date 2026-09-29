@@ -193,6 +193,8 @@ def update_lead_in_mysql(
     user_id=None,
     application_id=None,
     lender_id=None,
+    pending_step=None,
+    response_json=None,
 ):
     conn = pymysql.connect(**MYSQL_CONFIG)
     try:
@@ -206,6 +208,8 @@ def update_lead_in_mysql(
             application_id=application_id,
             lender_id=lender_id if lender_id is not None else CREDITSEA_LENDER_ID,
             lender_ref_id=lender_ref_id,
+            pending_step=pending_step,
+            response_json=response_json,
         )
     except Exception:
         conn.rollback()
@@ -304,6 +308,7 @@ def process_creditsea_statuses():
                         user_id=lead.get("user_id"),
                         application_id=lead.get("application_id"),
                         lender_id=lead.get("lender_id") or CREDITSEA_LENDER_ID,
+                        response_json={"phone": phone, "loan": loan},
                     )
                     updated_count += 1
                     print(

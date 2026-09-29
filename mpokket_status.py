@@ -106,7 +106,14 @@ def get_acquisition_status(item):
     )
 
 
-def update_lead_in_mysql(lead_id, disburse_status, disburse_amount, disburse_datetime):
+def update_lead_in_mysql(
+    lead_id,
+    disburse_status,
+    disburse_amount,
+    disburse_datetime,
+    *,
+    response_json=None,
+):
     conn = pymysql.connect(**MYSQL_CONFIG)
     try:
         # Resolve user_id / application_id / lender_id from MySQL lead_master.
@@ -117,6 +124,7 @@ def update_lead_in_mysql(lead_id, disburse_status, disburse_amount, disburse_dat
             disburse_amount=disburse_amount,
             disburse_datetime=disburse_datetime,
             lender_id=MPOKKET_LENDER_ID,
+            response_json=response_json,
         )
     except Exception:
         conn.rollback()
@@ -159,6 +167,7 @@ def process_mpokket_statuses():
                 disburse_status,
                 disburse_amount,
                 disburse_datetime,
+                response_json=response_body,
             )
             updated_count += 1
             print(

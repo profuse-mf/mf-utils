@@ -222,7 +222,8 @@ def map_disburse_fields(item):
         or item.get("disbursed_date")
         or item.get("disburse_datetime")
     )
-    return disburse_status, disburse_amount, disburse_datetime
+    pending_step = stage or step_code
+    return disburse_status, disburse_amount, disburse_datetime, pending_step
 
 
 def update_lead_in_mysql(
@@ -234,6 +235,8 @@ def update_lead_in_mysql(
     user_id=None,
     application_id=None,
     lender_id=None,
+    pending_step=None,
+    response_json=None,
 ):
     conn = pymysql.connect(**MYSQL_CONFIG)
     try:
@@ -246,6 +249,8 @@ def update_lead_in_mysql(
             user_id=user_id,
             application_id=application_id,
             lender_id=lender_id,
+            pending_step=pending_step,
+            response_json=response_json,
         )
     except Exception:
         conn.rollback()
@@ -290,9 +295,12 @@ def process_toofan_statuses():
                 skipped_count += 1
                 continue
 
-            disburse_status, disburse_amount, disburse_datetime = map_disburse_fields(
-                item
-            )
+            (
+                disburse_status,
+                disburse_amount,
+                disburse_datetime,
+                pending_step,
+            ) = map_disburse_fields(item)
             if not disburse_status:
                 print("  Skipped: status field empty in payload")
                 skipped_count += 1
@@ -306,6 +314,8 @@ def process_toofan_statuses():
                 user_id=lead.get("user_id"),
                 application_id=lead.get("application_id"),
                 lender_id=lead.get("lender_id") or lender_id,
+                pending_step=pending_step,
+                response_json=response_body,
             )
             updated_count += 1
             print(

@@ -149,6 +149,10 @@ def process_mpokket_statuses():
 
         try:
             response_body = fetch_mpokket_status(request_id)
+            print("  Response (raw):")
+            print(
+                f"    {json.dumps(response_body, ensure_ascii=False, default=str)}"
+            )
             item = extract_status_payload(response_body)
             if not item:
                 print(

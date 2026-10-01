@@ -154,6 +154,10 @@ def process_mmb_statuses():
 
         try:
             response_body = fetch_mmb_status(phone)
+            print("  Response (raw):")
+            print(
+                f"    {json.dumps(response_body, ensure_ascii=False, default=str)}"
+            )
             item = extract_status_payload(response_body)
             if not item:
                 print(

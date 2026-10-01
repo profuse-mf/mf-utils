@@ -306,6 +306,10 @@ def process_ramfincorp_statuses():
 
         try:
             response_body = fetch_ramfincorp_status(lender_ref_id)
+            print("  Response (raw):")
+            print(
+                f"    {json.dumps(response_body, ensure_ascii=False, default=str)}"
+            )
             item = extract_status_payload(response_body)
             if not item:
                 print(
@@ -319,12 +323,6 @@ def process_ramfincorp_statuses():
             disburse_amount = get_disburse_amount(item)
             disburse_datetime = get_disburse_datetime(item)
             pending_step = get_pending_step(item)
-
-            if str(disburse_status or "").strip().lower() == "success":
-                print("  Response (status=Success):")
-                print(
-                    f"    {json.dumps(response_body, ensure_ascii=False, default=str)}"
-                )
 
             result = update_lead_in_mysql(
                 lead_id,

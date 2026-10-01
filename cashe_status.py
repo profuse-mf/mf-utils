@@ -235,7 +235,10 @@ def process_cashe_statuses():
 
         try:
             response_body = fetch_cashe_status(partner_customer_id)
-            print(f"  Response: {json.dumps(response_body, default=str)[:500]}")
+            print("  Response (raw):")
+            print(
+                f"    {json.dumps(response_body, ensure_ascii=False, default=str)}"
+            )
             item = extract_status_payload(response_body)
             if not item:
                 print(

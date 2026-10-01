@@ -251,9 +251,9 @@ def process_creditsea_statuses():
         print(f"Requesting status for {len(batch)} phone(s)…")
         try:
             response_body = fetch_creditsea_statuses(batch)
+            print("  Response (raw):")
             print(
-                f"  Response message: {response_body.get('message')!r} "
-                f"(keys={len((response_body.get('data') or {}))})"
+                f"    {json.dumps(response_body, ensure_ascii=False, default=str)}"
             )
         except Exception as exc:
             failed_count += len(batch)

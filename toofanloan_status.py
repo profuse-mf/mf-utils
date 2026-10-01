@@ -8,6 +8,7 @@ Status API (Marketplace_Aggregator_Integration_Guide.pdf):
 leadId is taken from lead_master.lender_ref_id (lead_create leadID).
 """
 
+import argparse
 import base64
 import json
 import sys
@@ -37,7 +38,7 @@ SKIP_DISBURSE_STATUSES = (
     "rejected",
 )
 
-LEADS_QUERY = """
+LEADS_QUERY_TEMPLATE = """
 SELECT
     lm.id,
     lm.user_id,
@@ -47,14 +48,12 @@ SELECT
 FROM lead_master AS lm
 WHERE lm.lender_id = %s
   AND lm.status = 1
-  AND lm.created >= NOW() - INTERVAL %s DAY
+  {date_filter}
   AND lm.lender_ref_id IS NOT NULL
   AND TRIM(lm.lender_ref_id) != ''
   AND LOWER(TRIM(IFNULL(lm.disburse_status, ''))) NOT IN ({skip_placeholders})
 ORDER BY lm.id
-""".format(
-    skip_placeholders=", ".join(["%s"] * len(SKIP_DISBURSE_STATUSES)),
-)
+"""
 
 
 def resolve_api_credential():
@@ -135,14 +134,22 @@ def normalize_value(value):
     return text
 
 
-def fetch_leads(lender_id):
+def fetch_leads(lender_id, include_all=False):
+    date_filter = (
+        "" if include_all else "AND lm.created >= NOW() - INTERVAL %s DAY"
+    )
+    query = LEADS_QUERY_TEMPLATE.format(
+        date_filter=date_filter,
+        skip_placeholders=", ".join(["%s"] * len(SKIP_DISBURSE_STATUSES)),
+    )
+    if include_all:
+        params = (lender_id, *SKIP_DISBURSE_STATUSES)
+    else:
+        params = (lender_id, STALE_DAYS, *SKIP_DISBURSE_STATUSES)
     conn = pymysql.connect(**MYSQL_CONFIG)
     try:
         with conn.cursor() as cursor:
-            cursor.execute(
-                LEADS_QUERY,
-                (lender_id, STALE_DAYS, *SKIP_DISBURSE_STATUSES),
-            )
+            cursor.execute(query, params)
             return cursor.fetchall()
     finally:
         conn.close()
@@ -259,15 +266,16 @@ def update_lead_in_mysql(
         conn.close()
 
 
-def process_toofan_statuses():
+def process_toofan_statuses(include_all=False):
     require_config()
     lender_id = resolve_lender_id()
-    leads = fetch_leads(lender_id)
+    leads = fetch_leads(lender_id, include_all=include_all)
 
     print(f"Toofan status URL: {TOOFAN_STATUS_API_URL}")
     print(f"Toofan base URL: {TOOFAN_BASE_URL}")
     print(f"lender_id={lender_id}")
-    print(f"Found {len(leads)} lead(s) created in the last {STALE_DAYS} days")
+    window = "all time" if include_all else f"last {STALE_DAYS} days"
+    print(f"Found {len(leads)} lead(s) ({window})")
 
     updated_count = 0
     skipped_count = 0
@@ -346,9 +354,21 @@ def process_toofan_statuses():
     )
 
 
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description="Sync Toofan Loan lead statuses")
+    parser.add_argument(
+        "--all",
+        dest="include_all",
+        action="store_true",
+        help=f"Process all matching leads (ignore {STALE_DAYS}-day window)",
+    )
+    return parser.parse_args(argv)
+
+
 if __name__ == "__main__":
     try:
-        process_toofan_statuses()
+        args = parse_args()
+        process_toofan_statuses(include_all=args.include_all)
     except Exception as exc:
         print(f"Toofan Loan status sync failed: {exc}", file=sys.stderr)
         sys.exit(1)

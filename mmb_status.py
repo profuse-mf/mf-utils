@@ -1,3 +1,4 @@
+import argparse
 import json
 import sys
 import time
@@ -30,7 +31,7 @@ FROM lead_master AS lm
 JOIN mf_users AS u ON u.id = lm.user_id
 WHERE lm.lender_id = %s
   AND lm.status = 1
-  AND lm.created >= NOW() - INTERVAL %s DAY
+  {{date_filter}}
 ORDER BY lm.id
 """
 
@@ -53,11 +54,16 @@ def normalize_phone(mobile):
     return phone or None
 
 
-def fetch_leads():
+def fetch_leads(include_all=False):
+    date_filter = (
+        "" if include_all else "AND lm.created >= NOW() - INTERVAL %s DAY"
+    )
+    query = LEADS_QUERY.format(date_filter=date_filter)
+    params = (MMB_LENDER_ID,) if include_all else (MMB_LENDER_ID, STALE_DAYS)
     conn = pymysql.connect(**MYSQL_CONFIG)
     try:
         with conn.cursor() as cursor:
-            cursor.execute(LEADS_QUERY, (MMB_LENDER_ID, STALE_DAYS))
+            cursor.execute(query, params)
             return cursor.fetchall()
     finally:
         conn.close()
@@ -132,9 +138,10 @@ def update_lead_in_mysql(
         conn.close()
 
 
-def process_mmb_statuses():
-    leads = fetch_leads()
-    print(f"Found {len(leads)} lead(s) created in the last {STALE_DAYS} days")
+def process_mmb_statuses(include_all=False):
+    leads = fetch_leads(include_all=include_all)
+    window = "all time" if include_all else f"last {STALE_DAYS} days"
+    print(f"Found {len(leads)} lead(s) ({window})")
 
     updated_count = 0
     skipped_count = 0
@@ -209,9 +216,21 @@ def process_mmb_statuses():
     )
 
 
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description="Sync MMB lead statuses")
+    parser.add_argument(
+        "--all",
+        dest="include_all",
+        action="store_true",
+        help=f"Process all matching leads (ignore {STALE_DAYS}-day window)",
+    )
+    return parser.parse_args(argv)
+
+
 if __name__ == "__main__":
     try:
-        process_mmb_statuses()
+        args = parse_args()
+        process_mmb_statuses(include_all=args.include_all)
     except Exception as exc:
         print(f"MMB status sync failed: {exc}", file=sys.stderr)
         sys.exit(1)

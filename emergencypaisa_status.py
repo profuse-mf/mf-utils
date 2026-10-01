@@ -9,6 +9,7 @@ Status API (Ep_Lead_Status.pdf):
 leadid is taken from lead_master.lender_ref_id (lead_push leadId).
 """
 
+import argparse
 import json
 import sys
 import time
@@ -37,7 +38,7 @@ SKIP_DISBURSE_STATUSES = (
     "rejected",
 )
 
-LEADS_QUERY = """
+LEADS_QUERY_TEMPLATE = """
 SELECT
     lm.id,
     lm.user_id,
@@ -47,14 +48,12 @@ SELECT
 FROM lead_master AS lm
 WHERE lm.lender_id = %s
   AND lm.status = 1
-  AND lm.created >= NOW() - INTERVAL %s DAY
+  {date_filter}
   AND lm.lender_ref_id IS NOT NULL
   AND TRIM(lm.lender_ref_id) != ''
   AND LOWER(TRIM(IFNULL(lm.disburse_status, ''))) NOT IN ({skip_placeholders})
 ORDER BY lm.id
-""".format(
-    skip_placeholders=", ".join(["%s"] * len(SKIP_DISBURSE_STATUSES)),
-)
+"""
 
 
 def require_config():
@@ -78,14 +77,22 @@ def normalize_value(value):
     return text
 
 
-def fetch_leads():
+def fetch_leads(include_all=False):
+    date_filter = (
+        "" if include_all else "AND lm.created >= NOW() - INTERVAL %s DAY"
+    )
+    query = LEADS_QUERY_TEMPLATE.format(
+        date_filter=date_filter,
+        skip_placeholders=", ".join(["%s"] * len(SKIP_DISBURSE_STATUSES)),
+    )
+    if include_all:
+        params = (EMERGENCY_PAISA_LENDER_ID, *SKIP_DISBURSE_STATUSES)
+    else:
+        params = (EMERGENCY_PAISA_LENDER_ID, STALE_DAYS, *SKIP_DISBURSE_STATUSES)
     conn = pymysql.connect(**MYSQL_CONFIG)
     try:
         with conn.cursor() as cursor:
-            cursor.execute(
-                LEADS_QUERY,
-                (EMERGENCY_PAISA_LENDER_ID, STALE_DAYS, *SKIP_DISBURSE_STATUSES),
-            )
+            cursor.execute(query, params)
             return cursor.fetchall()
     finally:
         conn.close()
@@ -212,14 +219,15 @@ def update_lead_in_mysql(
         conn.close()
 
 
-def process_emergency_paisa_statuses():
+def process_emergency_paisa_statuses(include_all=False):
     require_config()
-    leads = fetch_leads()
+    leads = fetch_leads(include_all=include_all)
 
     print(f"Emergency Paisa status URL: {EMERGENCY_PAISA_STATUS_API_URL}")
     print(f"Emergency Paisa base URL: {EMERGENCY_PAISA_BASE_URL}")
     print(f"lender_id={EMERGENCY_PAISA_LENDER_ID}")
-    print(f"Found {len(leads)} lead(s) created in the last {STALE_DAYS} days")
+    window = "all time" if include_all else f"last {STALE_DAYS} days"
+    print(f"Found {len(leads)} lead(s) ({window})")
 
     updated_count = 0
     skipped_count = 0
@@ -289,9 +297,21 @@ def process_emergency_paisa_statuses():
     )
 
 
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description="Sync Emergency Paisa lead statuses")
+    parser.add_argument(
+        "--all",
+        dest="include_all",
+        action="store_true",
+        help=f"Process all matching leads (ignore {STALE_DAYS}-day window)",
+    )
+    return parser.parse_args(argv)
+
+
 if __name__ == "__main__":
     try:
-        process_emergency_paisa_statuses()
+        args = parse_args()
+        process_emergency_paisa_statuses(include_all=args.include_all)
     except Exception as exc:
         print(f"Emergency Paisa status sync failed: {exc}", file=sys.stderr)
         sys.exit(1)

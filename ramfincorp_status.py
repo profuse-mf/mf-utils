@@ -1,3 +1,4 @@
+import argparse
 import base64
 import json
 import sys
@@ -35,7 +36,7 @@ SKIP_DISBURSE_STATUSES = (
     "Disbursed",
 )
 
-LEADS_QUERY = """
+LEADS_QUERY_TEMPLATE = """
 SELECT
     lm.id,
     lm.user_id,
@@ -45,15 +46,12 @@ SELECT
 FROM lead_master AS lm
 WHERE lm.lender_id IN ({lender_placeholders})
   AND lm.status = 1
-  AND lm.created >= NOW() - INTERVAL %s DAY
+  {date_filter}
   AND lm.lender_ref_id IS NOT NULL
   AND lm.lender_ref_id != ''
   AND IFNULL(lm.disburse_status, '') NOT IN ({skip_placeholders})
 ORDER BY lm.id
-""".format(
-    lender_placeholders=", ".join(["%s"] * len(RAMFINCORP_LENDER_IDS)),
-    skip_placeholders=", ".join(["%s"] * len(SKIP_DISBURSE_STATUSES)),
-)
+"""
 
 
 def normalize_value(value):
@@ -113,14 +111,23 @@ def encrypt_jose_payload(payload):
     return token.serialize(compact=True)
 
 
-def fetch_leads():
+def fetch_leads(include_all=False):
+    date_filter = (
+        "" if include_all else "AND lm.created >= NOW() - INTERVAL %s DAY"
+    )
+    query = LEADS_QUERY_TEMPLATE.format(
+        lender_placeholders=", ".join(["%s"] * len(RAMFINCORP_LENDER_IDS)),
+        skip_placeholders=", ".join(["%s"] * len(SKIP_DISBURSE_STATUSES)),
+        date_filter=date_filter,
+    )
+    if include_all:
+        params = (*RAMFINCORP_LENDER_IDS, *SKIP_DISBURSE_STATUSES)
+    else:
+        params = (*RAMFINCORP_LENDER_IDS, STALE_DAYS, *SKIP_DISBURSE_STATUSES)
     conn = pymysql.connect(**MYSQL_CONFIG)
     try:
         with conn.cursor() as cursor:
-            cursor.execute(
-                LEADS_QUERY,
-                (*RAMFINCORP_LENDER_IDS, STALE_DAYS, *SKIP_DISBURSE_STATUSES),
-            )
+            cursor.execute(query, params)
             return cursor.fetchall()
     finally:
         conn.close()
@@ -269,7 +276,7 @@ def update_lead_in_mysql(
         conn.close()
 
 
-def process_ramfincorp_statuses():
+def process_ramfincorp_statuses(include_all=False):
     if not RAMFINCORP_STATUS_API_URL:
         raise RuntimeError(
             "RAMFINCORP_STATUS_API_URL is not set. Set the prod endpoint in .env when available."
@@ -282,10 +289,11 @@ def process_ramfincorp_statuses():
             "Set RAM_FINCORP_BASIC_AUTH_TOKEN (or RAMFINCORP_BASIC_USER/PASSWORD)."
         )
 
-    leads = fetch_leads()
+    leads = fetch_leads(include_all=include_all)
     mode = "jose" if RAMFINCORP_USE_JOSE else "json"
+    window = "all time" if include_all else f"last {STALE_DAYS} days"
     print(
-        f"Found {len(leads)} lead(s) created in the last {STALE_DAYS} days "
+        f"Found {len(leads)} lead(s) ({window}) "
         f"(mode={mode}, url={RAMFINCORP_STATUS_API_URL})"
     )
 
@@ -364,9 +372,21 @@ def process_ramfincorp_statuses():
     )
 
 
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description="Sync Ram Fincorp lead statuses")
+    parser.add_argument(
+        "--all",
+        dest="include_all",
+        action="store_true",
+        help=f"Process all matching leads (ignore {STALE_DAYS}-day window)",
+    )
+    return parser.parse_args(argv)
+
+
 if __name__ == "__main__":
     try:
-        process_ramfincorp_statuses()
+        args = parse_args()
+        process_ramfincorp_statuses(include_all=args.include_all)
     except Exception as exc:
         print(f"Ram Fincorp status sync failed: {exc}", file=sys.stderr)
         sys.exit(1)

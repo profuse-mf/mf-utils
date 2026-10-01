@@ -1,3 +1,4 @@
+import argparse
 import json
 import sys
 import urllib.error
@@ -21,7 +22,7 @@ from mf_disbursals_store import apply_status_update
 
 MYSQL_CONFIG = db_config()
 MPOKKET_LENDER_ID = 9
-STALE_DAYS = 15
+STALE_DAYS = 30
 
 
 def get_clickhouse_client():
@@ -34,14 +35,19 @@ def get_clickhouse_client():
     )
 
 
-def fetch_stale_leads():
+def fetch_stale_leads(include_all=False):
+    date_filter = (
+        ""
+        if include_all
+        else f"AND toDate(updated) >= today() - {STALE_DAYS}"
+    )
     query = f"""
         SELECT
             id,
             lender_ref_id
         FROM lead_master
         WHERE lender_id = 9
-          AND toDate(updated) >= today() - {STALE_DAYS}
+          {date_filter}
           AND lender_ref_id != ''
           AND ifNull(disburse_status, '') NOT IN (
               'Rejected On Request',
@@ -133,9 +139,10 @@ def update_lead_in_mysql(
         conn.close()
 
 
-def process_mpokket_statuses():
-    leads = fetch_stale_leads()
-    print(f"Found {len(leads)} lead(s) updated in the last {STALE_DAYS} days")
+def process_mpokket_statuses(include_all=False):
+    leads = fetch_stale_leads(include_all=include_all)
+    window = "all time" if include_all else f"last {STALE_DAYS} days"
+    print(f"Found {len(leads)} lead(s) ({window})")
 
     updated_count = 0
     skipped_count = 0
@@ -197,9 +204,21 @@ def process_mpokket_statuses():
     )
 
 
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description="Sync mPokket lead statuses")
+    parser.add_argument(
+        "--all",
+        dest="include_all",
+        action="store_true",
+        help=f"Process all matching leads (ignore {STALE_DAYS}-day window)",
+    )
+    return parser.parse_args(argv)
+
+
 if __name__ == "__main__":
     try:
-        process_mpokket_statuses()
+        args = parse_args()
+        process_mpokket_statuses(include_all=args.include_all)
     except Exception as exc:
         print(f"Mpokket status sync failed: {exc}", file=sys.stderr)
         sys.exit(1)

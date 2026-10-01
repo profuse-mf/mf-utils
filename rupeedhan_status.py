@@ -11,6 +11,7 @@ data.lead_id into lender_ref_id.
 
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import sys
@@ -41,7 +42,7 @@ SKIP_DISBURSE_STATUSES = (
     "rejected",
 )
 
-LEADS_QUERY = """
+LEADS_QUERY_TEMPLATE = """
 SELECT
     lm.id,
     lm.user_id,
@@ -53,13 +54,10 @@ FROM lead_master AS lm
 JOIN mf_users AS u ON u.id = lm.user_id
 WHERE lm.lender_id = %s
   AND lm.status = 1
-  AND lm.created >= NOW() - INTERVAL %s DAY
+  {date_filter}
   AND LOWER(TRIM(IFNULL(lm.disburse_status, ''))) NOT IN ({skip_placeholders})
 ORDER BY lm.id
-""".format(
-    mobile_col=sql_aes_decrypt("u.mobile", "mobile"),
-    skip_placeholders=", ".join(["%s"] * len(SKIP_DISBURSE_STATUSES)),
-)
+"""
 
 
 def require_config():
@@ -91,14 +89,23 @@ def normalize_phone(mobile):
     return last10
 
 
-def fetch_leads():
+def fetch_leads(include_all=False):
+    date_filter = (
+        "" if include_all else "AND lm.created >= NOW() - INTERVAL %s DAY"
+    )
+    query = LEADS_QUERY_TEMPLATE.format(
+        mobile_col=sql_aes_decrypt("u.mobile", "mobile"),
+        skip_placeholders=", ".join(["%s"] * len(SKIP_DISBURSE_STATUSES)),
+        date_filter=date_filter,
+    )
+    if include_all:
+        params = (RUPEEDHAN_LENDER_ID, *SKIP_DISBURSE_STATUSES)
+    else:
+        params = (RUPEEDHAN_LENDER_ID, STALE_DAYS, *SKIP_DISBURSE_STATUSES)
     conn = pymysql.connect(**MYSQL_CONFIG)
     try:
         with conn.cursor() as cursor:
-            cursor.execute(
-                LEADS_QUERY,
-                (RUPEEDHAN_LENDER_ID, STALE_DAYS, *SKIP_DISBURSE_STATUSES),
-            )
+            cursor.execute(query, params)
             return cursor.fetchall()
     finally:
         conn.close()
@@ -209,14 +216,15 @@ def update_lead_in_mysql(
         conn.close()
 
 
-def process_rupeedhan_statuses():
+def process_rupeedhan_statuses(include_all=False):
     require_config()
-    leads = fetch_leads()
+    leads = fetch_leads(include_all=include_all)
 
     print(f"RupeeDhan status URL: {RUPEEDHAN_STATUS_API_URL}")
     print(f"RupeeDhan base URL: {RUPEEDHAN_BASE_URL}")
     print(f"lender_id={RUPEEDHAN_LENDER_ID}")
-    print(f"Found {len(leads)} lead(s) created in the last {STALE_DAYS} days")
+    window = "all time" if include_all else f"last {STALE_DAYS} days"
+    print(f"Found {len(leads)} lead(s) ({window})")
 
     leads_by_phone = defaultdict(list)
     skipped_missing_mobile = 0
@@ -310,9 +318,21 @@ def process_rupeedhan_statuses():
     )
 
 
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description="Sync RupeeDhan lead statuses")
+    parser.add_argument(
+        "--all",
+        dest="include_all",
+        action="store_true",
+        help=f"Process all matching leads (ignore {STALE_DAYS}-day window)",
+    )
+    return parser.parse_args(argv)
+
+
 if __name__ == "__main__":
     try:
-        process_rupeedhan_statuses()
+        args = parse_args()
+        process_rupeedhan_statuses(include_all=args.include_all)
     except Exception as exc:
         print(f"RupeeDhan status sync failed: {exc}", file=sys.stderr)
         sys.exit(1)

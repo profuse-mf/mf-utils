@@ -707,6 +707,19 @@ def insert_campaign_record(mysql_conn, submitted_count, stats):
     return campaign_id
 
 
+def format_pepipost_response(result):
+    """Print Pepipost response body as-is (JSON when possible)."""
+    if result is None:
+        return "null"
+    if isinstance(result, (dict, list)):
+        return json.dumps(result, ensure_ascii=False, default=str)
+    text = str(result)
+    try:
+        return json.dumps(json.loads(text), ensure_ascii=False, default=str)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return text
+
+
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         description=(
@@ -725,9 +738,18 @@ def parse_args(argv=None):
             f"(default: exact offsets {list(DEFAULT_DAY_OFFSETS)})"
         ),
     )
+    parser.add_argument(
+        "--user-id",
+        type=int,
+        default=None,
+        metavar="ID",
+        help="Send only to this mf_users.id (after eligibility filters)",
+    )
     args = parser.parse_args(argv)
     if args.days is not None and args.days < 1:
         parser.error("-n/--days must be >= 1")
+    if args.user_id is not None and args.user_id < 1:
+        parser.error("--user-id must be >= 1")
     return args
 
 
@@ -773,6 +795,14 @@ def process_eligible_not_redirected_emails(argv=None):
             f"duplicate users={skipped_duplicate_user})"
         )
 
+        if args.user_id is not None:
+            before = len(jobs)
+            jobs = [job for job in jobs if int(job["user_id"]) == args.user_id]
+            print(
+                f"Filtered to --user-id={args.user_id}: "
+                f"{len(jobs)} of {before} job(s)"
+            )
+
         if not jobs:
             print("No recipients found. Nothing to send.")
             return []
@@ -807,14 +837,19 @@ def process_eligible_not_redirected_emails(argv=None):
                 result = send_email_via_pepipost(
                     send_to, job["subject"], job["html_body"]
                 )
-                print(f"  Sent: {result}")
+                print("  Pepipost response (raw):")
+                print(f"    {format_pepipost_response(result)}")
                 sent_jobs.append(job)
             except APIException as exc:
                 failed += 1
+                raw = getattr(exc, "response", None) or getattr(exc, "reason", None)
                 print(
                     f"  Pepipost error for {send_to}: {exc}",
                     file=sys.stderr,
                 )
+                if raw is not None:
+                    print("  Pepipost response (raw):", file=sys.stderr)
+                    print(f"    {format_pepipost_response(raw)}", file=sys.stderr)
 
         stats = build_lender_stats(sent_jobs)
         campaign_id = insert_campaign_record(

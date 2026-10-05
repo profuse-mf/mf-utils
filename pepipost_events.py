@@ -9,7 +9,10 @@ API:
   Header: api_key: <PEPIPOST_API_KEY>
   Query: startdate (YYYY-MM-DD, required), enddate, events, limit, scrollid, …
 
-Pagination: use scrollid from each response until exhausted.
+Pagination:
+  - Fetch day-by-day across the requested range (avoids silent 1-page caps).
+  - Prefer scrollid from each response; fall back to offset when a full page
+    returns without a next scrollid.
 Max limit per request: 1000 (API schema); description mentions up to 5000.
 """
 
@@ -232,39 +235,91 @@ def fetch_events_page(params):
         ) from exc
 
 
-def extract_rows_and_scrollid(payload):
-    """Normalize varied Pepipost/Netcore response shapes."""
-    if not isinstance(payload, dict):
-        return [], None
+_SCROLLID_KEYS = (
+    "scrollid",
+    "scrollId",
+    "scroll_id",
+    "next_scrollid",
+    "nextScrollId",
+    "next_scroll_id",
+)
+_ROW_LIST_KEYS = ("events", "logs", "rows", "records", "data", "result", "results")
 
-    scrollid = (
-        payload.get("scrollid")
-        or payload.get("scrollId")
-        or payload.get("scroll_id")
-    )
+
+def _as_scrollid(value):
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def find_scrollid(obj, depth=0):
+    """Find scrollid in common Netcore response nestings."""
+    if depth > 5 or not isinstance(obj, dict):
+        return None
+    for key in _SCROLLID_KEYS:
+        found = _as_scrollid(obj.get(key))
+        if found:
+            return found
+    for key in ("data", "meta", "pagination", "page", "result", "response"):
+        nested = obj.get(key)
+        if isinstance(nested, dict):
+            found = find_scrollid(nested, depth + 1)
+            if found:
+                return found
+    return None
+
+
+def extract_event_rows(payload):
+    """Normalize varied Pepipost/Netcore response shapes to a list of events."""
+    if isinstance(payload, list):
+        return payload
+    if not isinstance(payload, dict):
+        return []
 
     data = payload.get("data")
     if isinstance(data, list):
-        return data, scrollid
-
+        return data
     if isinstance(data, dict):
-        scrollid = (
-            data.get("scrollid")
-            or data.get("scrollId")
-            or data.get("scroll_id")
-            or scrollid
-        )
-        for key in ("events", "logs", "rows", "records", "data"):
+        for key in _ROW_LIST_KEYS:
             value = data.get(key)
             if isinstance(value, list):
-                return value, scrollid
+                return value
 
-    for key in ("events", "logs", "rows", "records"):
+    for key in _ROW_LIST_KEYS:
+        if key == "data":
+            continue
         value = payload.get(key)
         if isinstance(value, list):
-            return value, scrollid
+            return value
 
-    return [], scrollid
+    return []
+
+
+def extract_rows_and_scrollid(payload):
+    """Normalize varied Pepipost/Netcore response shapes."""
+    if not isinstance(payload, dict) and not isinstance(payload, list):
+        return [], None
+    rows = extract_event_rows(payload)
+    scrollid = find_scrollid(payload) if isinstance(payload, dict) else None
+    return rows, scrollid
+
+
+def iter_dates(start, end):
+    current = start
+    while current <= end:
+        yield current
+        current += timedelta(days=1)
+
+
+def row_fingerprint(row):
+    """Stable-ish identity for de-duplicating overlapped pages."""
+    if not isinstance(row, dict):
+        return str(row)
+    try:
+        return json.dumps(row, sort_keys=True, ensure_ascii=False, default=str)
+    except TypeError:
+        return str(row)
 
 
 def first_value(row, *keys):
@@ -442,19 +497,15 @@ def upsert_events(conn, rows):
     return len(values)
 
 
-def fetch_all_events(args):
-    start, end = resolve_dates(args)
-    events = resolve_events(args)
-    limit = max(1, min(int(args.limit or 1000), 1000))
+def fetch_day_events(day, args, events, limit, *, label=None):
+    """Fetch all pages for a single calendar day via scrollid, then offset.
 
-    print(f"Pepipost events URL: {PEPIPOST_EVENTS_API_URL}")
-    print(f"Date range: {start} → {end}")
-    print(f"Events filter: {events}")
-    print(f"Page limit: {limit}")
-
+    Returns (rows, truncated).
+    """
+    day_label = label or str(day)
     base_params = {
-        "startdate": start.isoformat(),
-        "enddate": end.isoformat(),
+        "startdate": day.isoformat(),
+        "enddate": day.isoformat(),
         "events": events,
         "limit": str(limit),
         "sort": args.sort,
@@ -468,40 +519,157 @@ def fetch_all_events(args):
     if args.xapiheader:
         base_params["xapiheader"] = args.xapiheader
 
-    all_rows = []
+    day_rows = []
+    seen_fps = set()
     scrollid = None
-    page = 0
     seen_scrollids = set()
+    page = 0
+    use_offset = False
+    offset = 0
+    truncated = False
 
     while True:
         page += 1
         params = dict(base_params)
-        if scrollid:
+        if use_offset:
+            params["offset"] = str(offset)
+        elif scrollid:
             params["scrollid"] = scrollid
 
-        print(f"Fetching page {page}" + (f" (scrollid={scrollid[:24]}…)" if scrollid else ""))
+        mode = (
+            f"offset={offset}"
+            if use_offset
+            else (f"scrollid={scrollid[:24]}…" if scrollid else "first page")
+        )
+        print(f"  {day_label} page {page} ({mode})")
         payload = fetch_events_page(params)
         rows, next_scrollid = extract_rows_and_scrollid(payload)
-        print(f"  Received {len(rows)} row(s)")
+        print(f"    Received {len(rows)} row(s); next_scrollid={bool(next_scrollid)}")
 
         if not rows:
             break
 
-        all_rows.extend(rows)
+        new_count = 0
+        for row in rows:
+            fp = row_fingerprint(row)
+            if fp in seen_fps:
+                continue
+            seen_fps.add(fp)
+            day_rows.append(row)
+            new_count += 1
+
+        if new_count == 0:
+            print("    No new rows after de-dupe; stopping day pagination")
+            break
 
         if args.max_pages and page >= args.max_pages:
-            print(f"Stopping after --max-pages={args.max_pages}")
+            print(f"    Stopping after --max-pages={args.max_pages}")
+            truncated = truncated or len(rows) >= limit
             break
 
-        if not next_scrollid or next_scrollid == scrollid:
-            break
-        if next_scrollid in seen_scrollids:
-            print("Repeated scrollid; stopping pagination")
-            break
-        seen_scrollids.add(next_scrollid)
-        scrollid = next_scrollid
+        # Prefer scrollid when the API provides a new one.
+        if (
+            not use_offset
+            and next_scrollid
+            and next_scrollid != scrollid
+            and next_scrollid not in seen_scrollids
+        ):
+            seen_scrollids.add(next_scrollid)
+            scrollid = next_scrollid
+            time.sleep(REQUEST_DELAY_SECONDS)
+            continue
+
+        # Full page without a usable next scrollid → try offset pagination.
+        if len(rows) >= limit:
+            if not use_offset:
+                print(
+                    "    Full page without next scrollid; "
+                    "falling back to offset pagination"
+                )
+                use_offset = True
+                offset = len(rows)
+            else:
+                offset += len(rows)
+            # OpenAPI documents offset maximum 1000; stop before invalid requests.
+            if offset > 1000:
+                print(
+                    f"    WARNING: {day_label} may be truncated "
+                    f"(offset cap reached with {len(day_rows)} rows)"
+                )
+                truncated = True
+                break
+            time.sleep(REQUEST_DELAY_SECONDS)
+            continue
+
+        # Short page → exhausted for this day.
+        break
+
+    return day_rows, truncated
+
+
+def fetch_day_events_complete(day, args, events, limit):
+    """Fetch one day; if still truncated, retry each event type separately."""
+    rows, truncated = fetch_day_events(day, args, events, limit)
+    event_parts = [part.strip() for part in events.split(",") if part.strip()]
+
+    if truncated and len(event_parts) > 1:
+        print(
+            f"  {day}: combined fetch looks truncated ({len(rows)} rows); "
+            "retrying per event type"
+        )
+        merged = []
+        seen = set()
+        still_truncated = False
+        for event_type in event_parts:
+            part_rows, part_truncated = fetch_day_events(
+                day,
+                args,
+                event_type,
+                limit,
+                label=f"{day}/{event_type}",
+            )
+            still_truncated = still_truncated or part_truncated
+            for row in part_rows:
+                fp = row_fingerprint(row)
+                if fp in seen:
+                    continue
+                seen.add(fp)
+                merged.append(row)
+            time.sleep(REQUEST_DELAY_SECONDS)
+        rows = merged
+        truncated = still_truncated
+
+    if truncated:
+        print(f"  WARNING: {day} fetch may be incomplete ({len(rows)} rows)")
+    else:
+        print(f"  {day}: collected {len(rows)} row(s)")
+    return rows
+
+
+def fetch_all_events(args):
+    start, end = resolve_dates(args)
+    events = resolve_events(args)
+    limit = max(1, min(int(args.limit or 1000), 1000))
+
+    print(f"Pepipost events URL: {PEPIPOST_EVENTS_API_URL}")
+    print(f"Date range: {start} → {end}")
+    print(f"Events filter: {events}")
+    print(f"Page limit: {limit}")
+    print("Fetching day-by-day with scrollid/offset pagination")
+
+    all_rows = []
+    seen_fps = set()
+    for day in iter_dates(start, end):
+        day_rows = fetch_day_events_complete(day, args, events, limit)
+        for row in day_rows:
+            fp = row_fingerprint(row)
+            if fp in seen_fps:
+                continue
+            seen_fps.add(fp)
+            all_rows.append(row)
         time.sleep(REQUEST_DELAY_SECONDS)
 
+    print(f"Fetched {len(all_rows)} unique event row(s) across date range")
     return all_rows
 
 

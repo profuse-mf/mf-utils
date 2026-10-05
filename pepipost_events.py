@@ -110,12 +110,31 @@ CREATE TABLE IF NOT EXISTS mf_pepipost_events (
     raw_json JSON DEFAULT NULL,
     fetched_at DATETIME NOT NULL,
     PRIMARY KEY (id),
-    UNIQUE KEY uq_pepipost_event_key (event_key),
+    UNIQUE KEY uq_pepipost_trans_email (trans_id, email),
+    KEY idx_pepipost_event_key (event_key),
     KEY idx_pepipost_event_time (event_time),
     KEY idx_pepipost_email (email),
     KEY idx_pepipost_event_type (event_type)
 )
 """
+
+# Later lifecycle events outrank earlier ones when event_time ties.
+EVENT_TYPE_RANK = {
+    "processed": 10,
+    "sent": 20,
+    "open": 30,
+    "opened": 30,
+    "click": 40,
+    "clicked": 40,
+    "unsubscribe": 50,
+    "spam": 50,
+    "abuse": 50,
+    "softbounce": 60,
+    "hardbounce": 70,
+    "bounce": 70,
+    "dropped": 80,
+    "invalid": 90,
+}
 
 
 def require_config():
@@ -206,9 +225,108 @@ def resolve_events(args):
     )
 
 
+def _index_exists(cursor, table_name, index_name):
+    cursor.execute(
+        """
+        SELECT 1
+        FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = %s
+          AND INDEX_NAME = %s
+        LIMIT 1
+        """,
+        (table_name, index_name),
+    )
+    return cursor.fetchone() is not None
+
+
+def _collapse_duplicate_trans_email(cursor):
+    """Keep one row per (trans_id, email) — latest event_time / lifecycle."""
+    cursor.execute(
+        """
+        SELECT trans_id, email, COUNT(*) AS n
+        FROM mf_pepipost_events
+        WHERE trans_id IS NOT NULL
+          AND TRIM(trans_id) != ''
+          AND email IS NOT NULL
+          AND TRIM(email) != ''
+        GROUP BY trans_id, email
+        HAVING COUNT(*) > 1
+        """
+    )
+    dup_groups = cursor.fetchall()
+    deleted = 0
+    for group in dup_groups:
+        trans_id = group["trans_id"] if isinstance(group, dict) else group[0]
+        email = group["email"] if isinstance(group, dict) else group[1]
+        cursor.execute(
+            """
+            SELECT id, event_type, event_time
+            FROM mf_pepipost_events
+            WHERE trans_id = %s AND email = %s
+            ORDER BY id
+            """,
+            (trans_id, email),
+        )
+        rows = cursor.fetchall()
+        keep_id = None
+        keep_row = None
+        for row in rows:
+            if keep_row is None or event_row_is_newer(row, keep_row):
+                keep_row = row
+                keep_id = row["id"] if isinstance(row, dict) else row[0]
+        if keep_id is None:
+            continue
+        ids = [
+            (r["id"] if isinstance(r, dict) else r[0])
+            for r in rows
+            if (r["id"] if isinstance(r, dict) else r[0]) != keep_id
+        ]
+        if not ids:
+            continue
+        placeholders = ", ".join(["%s"] * len(ids))
+        cursor.execute(
+            f"DELETE FROM mf_pepipost_events WHERE id IN ({placeholders})",
+            ids,
+        )
+        deleted += cursor.rowcount
+    return deleted
+
+
 def ensure_events_table(conn):
     with conn.cursor() as cursor:
         cursor.execute(ENSURE_TABLE_SQL)
+        # Migrate legacy unique(event_key) → unique(trans_id, email).
+        if _index_exists(cursor, "mf_pepipost_events", "uq_pepipost_event_key"):
+            deleted = _collapse_duplicate_trans_email(cursor)
+            if deleted:
+                print(
+                    f"Collapsed {deleted} duplicate mf_pepipost_events "
+                    "row(s) before unique(trans_id, email) migration"
+                )
+            cursor.execute(
+                "ALTER TABLE mf_pepipost_events DROP INDEX uq_pepipost_event_key"
+            )
+        if not _index_exists(cursor, "mf_pepipost_events", "uq_pepipost_trans_email"):
+            deleted = _collapse_duplicate_trans_email(cursor)
+            if deleted:
+                print(
+                    f"Collapsed {deleted} duplicate mf_pepipost_events "
+                    "row(s) before adding unique(trans_id, email)"
+                )
+            cursor.execute(
+                """
+                ALTER TABLE mf_pepipost_events
+                ADD UNIQUE KEY uq_pepipost_trans_email (trans_id, email)
+                """
+            )
+        if not _index_exists(cursor, "mf_pepipost_events", "idx_pepipost_event_key"):
+            cursor.execute(
+                """
+                ALTER TABLE mf_pepipost_events
+                ADD KEY idx_pepipost_event_key (event_key)
+                """
+            )
     conn.commit()
 
 
@@ -428,34 +546,81 @@ def normalize_event_row(row):
     )
 
     raw = json.dumps(row, ensure_ascii=False, sort_keys=True, default=str)
-    key_material = "|".join(
-        [
-            str(trans_id or ""),
-            str(event_type or ""),
-            str(email or ""),
-            str(event_time or ""),
-            hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16],
-        ]
-    )
-    event_key = hashlib.sha1(key_material.encode("utf-8")).hexdigest()
+    trans_id = str(trans_id).strip()[:100] if trans_id else None
+    email = str(email).strip().lower()[:255] if email else None
+    # One row per (trans_id, email); event_key mirrors that identity.
+    if trans_id and email:
+        event_key = hashlib.sha1(f"{trans_id}|{email}".encode("utf-8")).hexdigest()
+    else:
+        event_key = None
 
     return {
         "event_key": event_key,
-        "event_type": event_type,
+        "event_type": (str(event_type).strip().lower() if event_type else None),
         "event_time": event_time,
         "email": email,
         "from_address": from_address,
         "subject": (subject[:500] if subject else None),
-        "trans_id": (str(trans_id)[:100] if trans_id else None),
+        "trans_id": trans_id,
         "xapiheader": (xapiheader[:255] if xapiheader else None),
         "remarks": remarks,
         "raw_json": raw,
     }
 
 
+def event_type_rank(event_type):
+    if not event_type:
+        return 0
+    return EVENT_TYPE_RANK.get(str(event_type).strip().lower(), 0)
+
+
+def event_row_is_newer(candidate, existing):
+    """True if candidate should replace existing for the same trans_id+email."""
+    if existing is None:
+        return True
+
+    cand_time = candidate.get("event_time")
+    exist_time = existing.get("event_time")
+
+    if cand_time and exist_time and cand_time != exist_time:
+        return cand_time > exist_time
+    if cand_time and not exist_time:
+        return True
+    if exist_time and not cand_time:
+        return False
+
+    return event_type_rank(candidate.get("event_type")) >= event_type_rank(
+        existing.get("event_type")
+    )
+
+
+def collapse_rows_by_trans_email(rows):
+    """One row per (trans_id, email); keep the latest lifecycle event."""
+    collapsed = {}
+    skipped = 0
+    for row in rows:
+        trans_id = row.get("trans_id")
+        email = row.get("email")
+        if not trans_id or not email:
+            skipped += 1
+            continue
+        key = (trans_id, email)
+        current = collapsed.get(key)
+        if event_row_is_newer(row, current):
+            collapsed[key] = row
+    if skipped:
+        print(
+            f"Skipped {skipped} event row(s) missing trans_id or email "
+            "(cannot key uniquely)"
+        )
+    return list(collapsed.values())
+
+
 def upsert_events(conn, rows):
+    rows = collapse_rows_by_trans_email(rows)
     if not rows:
         return 0
+    # Update only when the incoming event is newer than the stored one.
     sql = """
         INSERT INTO mf_pepipost_events (
             event_key, event_type, event_time, email, from_address,
@@ -465,15 +630,75 @@ def upsert_events(conn, rows):
             %s, %s, %s, %s, CAST(%s AS JSON), NOW()
         )
         ON DUPLICATE KEY UPDATE
-            event_type = VALUES(event_type),
-            event_time = VALUES(event_time),
-            email = VALUES(email),
-            from_address = VALUES(from_address),
-            subject = VALUES(subject),
-            trans_id = VALUES(trans_id),
-            xapiheader = VALUES(xapiheader),
-            remarks = VALUES(remarks),
-            raw_json = VALUES(raw_json),
+            event_key = VALUES(event_key),
+            event_type = IF(
+                VALUES(event_time) IS NOT NULL
+                  AND (event_time IS NULL OR VALUES(event_time) > event_time),
+                VALUES(event_type),
+                IF(
+                    VALUES(event_time) <=> event_time
+                      AND (
+                        CASE LOWER(IFNULL(VALUES(event_type), ''))
+                          WHEN 'processed' THEN 10
+                          WHEN 'sent' THEN 20
+                          WHEN 'open' THEN 30
+                          WHEN 'opened' THEN 30
+                          WHEN 'click' THEN 40
+                          WHEN 'clicked' THEN 40
+                          WHEN 'unsubscribe' THEN 50
+                          WHEN 'spam' THEN 50
+                          WHEN 'abuse' THEN 50
+                          WHEN 'softbounce' THEN 60
+                          WHEN 'hardbounce' THEN 70
+                          WHEN 'bounce' THEN 70
+                          WHEN 'dropped' THEN 80
+                          WHEN 'invalid' THEN 90
+                          ELSE 0
+                        END
+                      ) >= (
+                        CASE LOWER(IFNULL(event_type, ''))
+                          WHEN 'processed' THEN 10
+                          WHEN 'sent' THEN 20
+                          WHEN 'open' THEN 30
+                          WHEN 'opened' THEN 30
+                          WHEN 'click' THEN 40
+                          WHEN 'clicked' THEN 40
+                          WHEN 'unsubscribe' THEN 50
+                          WHEN 'spam' THEN 50
+                          WHEN 'abuse' THEN 50
+                          WHEN 'softbounce' THEN 60
+                          WHEN 'hardbounce' THEN 70
+                          WHEN 'bounce' THEN 70
+                          WHEN 'dropped' THEN 80
+                          WHEN 'invalid' THEN 90
+                          ELSE 0
+                        END
+                      ),
+                    VALUES(event_type),
+                    event_type
+                )
+            ),
+            event_time = IF(
+                VALUES(event_time) IS NOT NULL
+                  AND (event_time IS NULL OR VALUES(event_time) >= event_time),
+                VALUES(event_time),
+                event_time
+            ),
+            from_address = COALESCE(VALUES(from_address), from_address),
+            subject = COALESCE(VALUES(subject), subject),
+            xapiheader = COALESCE(VALUES(xapiheader), xapiheader),
+            remarks = IF(
+                VALUES(event_time) IS NOT NULL
+                  AND (event_time IS NULL OR VALUES(event_time) >= event_time),
+                VALUES(remarks),
+                remarks
+            ),
+            raw_json = IF(
+                VALUES(event_time) IS NOT NULL
+                  AND (event_time IS NULL OR VALUES(event_time) >= event_time),
+                VALUES(raw_json),
+                raw_json
+            ),
             fetched_at = NOW()
     """
     values = [

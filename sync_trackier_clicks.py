@@ -3,17 +3,30 @@
 API: GET https://api.trackier.com/v2/reports/clicks
 Docs: https://api-docs.trackier.io/docs/perf-admin-api-docs/e4a1e1388a249-clicks-report
 
-Mapping campaign_id → lender_id:
+Mapping campaign_id → lender_id (from mf_lenders.redirect_url):
   134 → 5 (Salary On Time)
-  187 → 6
-  200 → 4
+  187 → 6 (Surya Loan)
+  200 → 4 (Salary Top Up)
+  210 → 2 (Poonawaala; lender 8 shares same campaign)
   211 → 1 if BRE eligible for lender 1, else 7 if BRE eligible for lender 7, else skip
-  212 → 3
-  221 → 9
+  212 → 3 (Emergency Paisa)
+  221 → 9 (Mpokket)
+  222 → 10 (My Money Bazaar)
   227 → 11 (CASHe)
   234 → 13 (PayMe)
   235 → 12 (CreditSea)
   236 → 14 (Rupeedhan)
+  237 → 15 (Toofanloan)
+  240 → 16 (B4Salary)
+  242 → 17 (DigiCredit)
+  243 → 18 (Actoloan)
+  245 → 22 (LoanDigit)
+  246 → 19 (True Fund)
+  247 → 20 (Fast Rupees)
+  249 → 21 (Paytrust)
+  253 → 23 (Salary Brother)
+  255 → 24 (Turantloan)
+  256 → 25 (Mini Pocket)
 
 Unmapped campaign_ids trigger an alert email to MF_REPORT_EMAIL_TO
 (same daily-report recipients used by mis_new.py / daily ops).
@@ -52,14 +65,27 @@ CLICK_FIELDS = ("campaign_id", "p1")
 # Static campaign_id → lender_id (except 211, resolved via BRE)
 CAMPAIGN_LENDER_MAP = {
     134: 5,   # Salary On Time
-    187: 6,
-    200: 4,
-    212: 3,
-    221: 9,
+    187: 6,   # Surya Loan
+    200: 4,   # Salary Top Up
+    210: 2,   # Poonawaala Fincorp (also lender_id 8)
+    212: 3,   # Emergency Paisa
+    221: 9,   # Mpokket
+    222: 10,  # My Money Bazaar
     227: 11,  # CASHe
     234: 13,  # PayMe
     235: 12,  # CreditSea
     236: 14,  # Rupeedhan
+    237: 15,  # Toofanloan
+    240: 16,  # B4Salary
+    242: 17,  # DigiCredit
+    243: 18,  # Actoloan
+    245: 22,  # LoanDigit
+    246: 19,  # True Fund
+    247: 20,  # Fast Rupees
+    249: 21,  # Paytrust
+    253: 23,  # Salary Brother
+    255: 24,  # Turantloan
+    256: 25,  # Mini Pocket
 }
 CAMPAIGN_211 = 211
 CAMPAIGN_211_LENDER_PREFERENCE = (1, 7)

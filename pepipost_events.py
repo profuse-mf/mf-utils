@@ -330,6 +330,24 @@ def ensure_events_table(conn):
     conn.commit()
 
 
+def is_extraction_completed_payload(payload):
+    """Netcore often returns HTTP 400 when a day/scroll has no more rows."""
+    if not isinstance(payload, dict):
+        return False
+    status = str(payload.get("status") or "").strip().lower()
+    data = payload.get("data")
+    data_text = str(data).strip().lower() if data is not None else ""
+    if status in {"completed", "complete", "success"} and (
+        "extraction completed" in data_text
+        or "no data" in data_text
+        or "no records" in data_text
+        or data in (None, "", [], {})
+    ):
+        return True
+    message = str(payload.get("message") or payload.get("error") or "").lower()
+    return "extraction completed" in message or "no data found" in message
+
+
 def fetch_events_page(params):
     query = urllib.parse.urlencode({k: v for k, v in params.items() if v is not None})
     url = f"{PEPIPOST_EVENTS_API_URL}?{query}"
@@ -348,6 +366,18 @@ def fetch_events_page(params):
             return json.loads(body) if body else {}
     except urllib.error.HTTPError as exc:
         error_body = exc.read().decode("utf-8", errors="replace")
+        payload = {}
+        try:
+            payload = json.loads(error_body) if error_body else {}
+        except json.JSONDecodeError:
+            payload = {}
+        # Empty / finished scroll windows come back as 400 completed — not fatal.
+        if exc.code in (400, 404) and is_extraction_completed_payload(payload):
+            print(
+                f"    Netcore reports extraction completed "
+                f"(HTTP {exc.code}); treating as empty page"
+            )
+            return {"data": [], "status": "completed"}
         raise RuntimeError(
             f"Pepipost events API error {exc.code}: {error_body}"
         ) from exc

@@ -348,6 +348,14 @@ def is_extraction_completed_payload(payload):
     return "extraction completed" in message or "no data found" in message
 
 
+def print_pepipost_raw_response(body, *, http_status=None):
+    label = "Pepipost response (raw)"
+    if http_status is not None:
+        label = f"{label} HTTP {http_status}"
+    print(f"    {label}:")
+    print(f"    {body if body else ''}")
+
+
 def fetch_events_page(params):
     query = urllib.parse.urlencode({k: v for k, v in params.items() if v is not None})
     url = f"{PEPIPOST_EVENTS_API_URL}?{query}"
@@ -362,10 +370,13 @@ def fetch_events_page(params):
     )
     try:
         with urllib.request.urlopen(request, timeout=60) as response:
+            http_status = response.getcode()
             body = response.read().decode("utf-8")
+            print_pepipost_raw_response(body, http_status=http_status)
             return json.loads(body) if body else {}
     except urllib.error.HTTPError as exc:
         error_body = exc.read().decode("utf-8", errors="replace")
+        print_pepipost_raw_response(error_body, http_status=exc.code)
         payload = {}
         try:
             payload = json.loads(error_body) if error_body else {}

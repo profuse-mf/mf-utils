@@ -180,6 +180,23 @@ RUPEEDHAN_STATUS_API_URL = _env("RUPEEDHAN_STATUS_API_URL") or (
 )
 RUPEEDHAN_LENDER_ID = _env_int("RUPEEDHAN_LENDER_ID", 14)
 
+# Turant Loan Lead Status API
+# POST /partner/check-lead-status — header: X-Api-Key
+# Body: partner_id, phone, pan
+TURANT_BASE_URL = (
+    _env("TURANT_BASE_URL") or "https://api.turantloan.com"
+).rstrip("/")
+TURANT_API_KEY = _env("TURANT_API_KEY")
+TURANT_PARTNER_ID = _env("TURANT_PARTNER_ID", "Profuse")
+TURANT_STATUS_PATH = _env(
+    "TURANT_STATUS_PATH",
+    "/partner/check-lead-status",
+)
+TURANT_STATUS_API_URL = _env("TURANT_STATUS_API_URL") or (
+    f"{TURANT_BASE_URL}{TURANT_STATUS_PATH}"
+)
+TURANT_LENDER_ID = _env_int("TURANT_LENDER_ID", 24)
+
 # Ram Fincorp Status API (aligns with mf-api RAM_FINCORP_* env names)
 RAMFINCORP_BASE_URL = (
     _env("RAM_FINCORP_BASE_URL")

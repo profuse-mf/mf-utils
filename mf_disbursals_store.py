@@ -132,23 +132,30 @@ def _fetch_lead_keys(cursor, lead_id):
     return cursor.fetchone() or {}
 
 
-def apply_status_update(
+def persist_lender_status_poll(
     conn,
     *,
     lead_id,
-    disburse_status,
+    response_json,
+    disburse_status=None,
     disburse_amount=None,
     disburse_datetime=None,
     user_id=None,
     application_id=None,
     lender_id=None,
     lender_ref_id=None,
-    response_json=None,
-    # Ignored — accepted so older call sites that pass pending_step/etc. keep working.
+    apply_to_lead_and_disbursals=True,
+    # Ignored — accepted so older call sites keep working.
     pending_step=None,
     status_detail=None,
 ):
-    """Update lead_master, upsert mf_disbursals, and log raw status response_json.
+    """Persist one status-API poll for a lead.
+
+    Rules (hard):
+    - Always write mf_lender_status_logs / mf_lender_status_current for any
+      response_json (valid or invalid).
+    - When apply_to_lead_and_disbursals=True (valid response for this lead),
+      also update lead_master and upsert mf_disbursals for ANY status value.
     """
     with conn.cursor() as cursor:
         if user_id is None or application_id is None or lender_id is None:
@@ -160,48 +167,61 @@ def apply_status_update(
             if lender_id is None:
                 lender_id = keys.get("lender_id")
 
-        if lender_ref_id:
-            cursor.execute(
-                """
-                UPDATE lead_master
-                SET disburse_status = %s,
-                    disburse_amount = %s,
-                    disburse_datetime = %s,
-                    lender_ref_id = COALESCE(NULLIF(TRIM(lender_ref_id), ''), %s),
-                    disbursal_status_check = NOW()
-                WHERE id = %s
-                """,
-                (
-                    disburse_status,
-                    disburse_amount,
-                    disburse_datetime,
-                    lender_ref_id,
-                    lead_id,
-                ),
+        disbursal_action = None
+        if apply_to_lead_and_disbursals:
+            if lender_ref_id:
+                cursor.execute(
+                    """
+                    UPDATE lead_master
+                    SET disburse_status = %s,
+                        disburse_amount = %s,
+                        disburse_datetime = %s,
+                        lender_ref_id = COALESCE(NULLIF(TRIM(lender_ref_id), ''), %s),
+                        disbursal_status_check = NOW()
+                    WHERE id = %s
+                    """,
+                    (
+                        disburse_status,
+                        disburse_amount,
+                        disburse_datetime,
+                        lender_ref_id,
+                        lead_id,
+                    ),
+                )
+            else:
+                cursor.execute(
+                    """
+                    UPDATE lead_master
+                    SET disburse_status = %s,
+                        disburse_amount = %s,
+                        disburse_datetime = %s,
+                        disbursal_status_check = NOW()
+                    WHERE id = %s
+                    """,
+                    (disburse_status, disburse_amount, disburse_datetime, lead_id),
+                )
+
+            disbursal_action = write_disbursal_if_qualified(
+                cursor,
+                user_id=user_id,
+                application_id=application_id,
+                lender_id=lender_id,
+                d_status=disburse_status,
+                d_amount=disburse_amount,
+                d_date=disburse_datetime,
             )
         else:
+            # Still stamp last check time so ops can see the poll happened.
             cursor.execute(
                 """
                 UPDATE lead_master
-                SET disburse_status = %s,
-                    disburse_amount = %s,
-                    disburse_datetime = %s,
-                    disbursal_status_check = NOW()
+                SET disbursal_status_check = NOW()
                 WHERE id = %s
                 """,
-                (disburse_status, disburse_amount, disburse_datetime, lead_id),
+                (lead_id,),
             )
 
-        disbursal_action = write_disbursal_if_qualified(
-            cursor,
-            user_id=user_id,
-            application_id=application_id,
-            lender_id=lender_id,
-            d_status=disburse_status,
-            d_amount=disburse_amount,
-            d_date=disburse_datetime,
-        )
-
+        # Always log — valid or invalid response.
         status_log = record_lender_status(
             cursor,
             lead_id=lead_id,
@@ -220,4 +240,40 @@ def apply_status_update(
         "lender_id": lender_id,
         "disbursal": disbursal_action,
         "status_log_id": status_log.get("log_id"),
+        "applied": apply_to_lead_and_disbursals,
     }
+
+
+def apply_status_update(
+    conn,
+    *,
+    lead_id,
+    disburse_status,
+    disburse_amount=None,
+    disburse_datetime=None,
+    user_id=None,
+    application_id=None,
+    lender_id=None,
+    lender_ref_id=None,
+    response_json=None,
+    # Ignored — accepted so older call sites that pass pending_step/etc. keep working.
+    pending_step=None,
+    status_detail=None,
+):
+    """Update lead_master, upsert mf_disbursals, and log raw status response_json.
+    """
+    return persist_lender_status_poll(
+        conn,
+        lead_id=lead_id,
+        response_json=response_json,
+        disburse_status=disburse_status,
+        disburse_amount=disburse_amount,
+        disburse_datetime=disburse_datetime,
+        user_id=user_id,
+        application_id=application_id,
+        lender_id=lender_id,
+        lender_ref_id=lender_ref_id,
+        apply_to_lead_and_disbursals=True,
+        pending_step=pending_step,
+        status_detail=status_detail,
+    )

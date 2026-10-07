@@ -30,7 +30,7 @@ from config import (
     RUPEEDHAN_STATUS_API_URL,
     db_config,
 )
-from mf_disbursals_store import apply_status_update
+from mf_disbursals_store import persist_lender_status_poll
 from mf_user_crypto import sql_aes_decrypt
 
 MYSQL_CONFIG = db_config()
@@ -181,24 +181,25 @@ def map_disburse_fields(item):
     return disburse_status, disburse_amount, disburse_datetime, lead_id
 
 
-def update_lead_in_mysql(
+def persist_poll(
     lead_id,
-    disburse_status,
-    disburse_amount,
-    disburse_datetime,
-    lender_ref_id=None,
     *,
+    response_json,
+    disburse_status=None,
+    disburse_amount=None,
+    disburse_datetime=None,
+    lender_ref_id=None,
     user_id=None,
     application_id=None,
     lender_id=None,
-    pending_step=None,
-    response_json=None,
+    apply_to_lead_and_disbursals=True,
 ):
     conn = pymysql.connect(**MYSQL_CONFIG)
     try:
-        return apply_status_update(
+        return persist_lender_status_poll(
             conn,
             lead_id=lead_id,
+            response_json=response_json,
             disburse_status=disburse_status,
             disburse_amount=disburse_amount,
             disburse_datetime=disburse_datetime,
@@ -206,8 +207,7 @@ def update_lead_in_mysql(
             application_id=application_id,
             lender_id=lender_id if lender_id is not None else RUPEEDHAN_LENDER_ID,
             lender_ref_id=lender_ref_id,
-            pending_step=pending_step,
-            response_json=response_json,
+            apply_to_lead_and_disbursals=apply_to_lead_and_disbursals,
         )
     except Exception:
         conn.rollback()
@@ -243,6 +243,7 @@ def process_rupeedhan_statuses(include_all=False):
     print(f"Unique phones to query: {len(phones)}")
 
     updated_count = 0
+    logged_only_count = 0
     skipped_count = skipped_missing_mobile
     failed_count = 0
     disbursals_count = 0
@@ -253,48 +254,43 @@ def process_rupeedhan_statuses(include_all=False):
 
         try:
             response_body = fetch_rupeedhan_status(phone)
-            item = extract_status_payload(response_body)
-            if not item:
-                print(
-                    f"  Skipped: no lead "
-                    f"(success={response_body.get('success')}, "
-                    f"message={response_body.get('message')!r})"
-                )
-                skipped_count += len(phone_leads)
-                time.sleep(REQUEST_DELAY_SECONDS)
-                continue
-
+            item = extract_status_payload(response_body) or {}
             disburse_status, disburse_amount, disburse_datetime, api_lead_id = (
                 map_disburse_fields(item)
             )
-            if not disburse_status:
-                print("  Skipped: status empty in payload")
-                skipped_count += len(phone_leads)
-                time.sleep(REQUEST_DELAY_SECONDS)
-                continue
+            if not disburse_status and isinstance(response_body, dict):
+                disburse_status = normalize_value(
+                    response_body.get("message") or response_body.get("status")
+                )
+            apply_full = isinstance(response_body, dict)
 
             for lead in phone_leads:
                 lead_id = lead["id"]
                 try:
-                    result = update_lead_in_mysql(
+                    result = persist_poll(
                         lead_id,
-                        disburse_status,
-                        disburse_amount,
-                        disburse_datetime,
+                        response_json=response_body,
+                        disburse_status=disburse_status,
+                        disburse_amount=disburse_amount,
+                        disburse_datetime=disburse_datetime,
                         lender_ref_id=api_lead_id,
                         user_id=lead.get("user_id"),
                         application_id=lead.get("application_id"),
                         lender_id=lead.get("lender_id") or RUPEEDHAN_LENDER_ID,
-                        response_json=response_body,
+                        apply_to_lead_and_disbursals=apply_full,
                     )
-                    updated_count += 1
-                    print(
-                        f"  Updated lead_id={lead_id}: "
-                        f"disburse_status={disburse_status}, "
-                        f"disburse_amount={disburse_amount}, "
-                        f"disburse_datetime={disburse_datetime}, "
-                        f"lender_ref_id={api_lead_id}"
-                    )
+                    if apply_full:
+                        updated_count += 1
+                        print(
+                            f"  Persisted lead_id={lead_id}: "
+                            f"disburse_status={disburse_status}, "
+                            f"disburse_amount={disburse_amount}, "
+                            f"disburse_datetime={disburse_datetime}, "
+                            f"lender_ref_id={api_lead_id}, "
+                            f"status_log_id={result.get('status_log_id')}"
+                        )
+                    else:
+                        logged_only_count += 1
                     if result.get("disbursal"):
                         disbursals_count += 1
                         print(
@@ -306,15 +302,38 @@ def process_rupeedhan_statuses(include_all=False):
                     failed_count += 1
                     print(f"  Failed lead_id={lead_id}: {exc}", file=sys.stderr)
         except Exception as exc:
-            failed_count += len(phone_leads)
+            error_payload = {"error": str(exc), "phone": phone}
+            for lead in phone_leads:
+                lead_id = lead["id"]
+                try:
+                    result = persist_poll(
+                        lead_id,
+                        response_json=error_payload,
+                        user_id=lead.get("user_id"),
+                        application_id=lead.get("application_id"),
+                        lender_id=lead.get("lender_id") or RUPEEDHAN_LENDER_ID,
+                        apply_to_lead_and_disbursals=False,
+                    )
+                    logged_only_count += 1
+                    print(
+                        f"  Logged error lead_id={lead_id}: "
+                        f"status_log_id={result.get('status_log_id')}"
+                    )
+                except Exception as log_exc:
+                    failed_count += 1
+                    print(
+                        f"  Failed logging lead_id={lead_id}: {log_exc}",
+                        file=sys.stderr,
+                    )
             print(f"  Failed mobile={phone}: {exc}", file=sys.stderr)
 
         time.sleep(REQUEST_DELAY_SECONDS)
 
     print()
     print(
-        f"Done. Updated={updated_count}, Skipped={skipped_count}, "
-        f"Failed={failed_count}, mf_disbursals={disbursals_count}"
+        f"Done. Updated={updated_count}, LoggedOnly={logged_only_count}, "
+        f"SkippedMissingKeys={skipped_count}, Failed={failed_count}, "
+        f"mf_disbursals={disbursals_count}"
     )
 
 

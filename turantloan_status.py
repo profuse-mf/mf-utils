@@ -31,7 +31,7 @@ from config import (
     TURANT_STATUS_API_URL,
     db_config,
 )
-from mf_disbursals_store import apply_status_update
+from mf_disbursals_store import persist_lender_status_poll
 from mf_user_crypto import sql_aes_decrypt
 
 MYSQL_CONFIG = db_config()
@@ -41,16 +41,6 @@ REQUEST_DELAY_SECONDS = 1
 SKIP_DISBURSE_STATUSES = (
     "disbursed",
     "rejected",
-)
-
-# Soft / non-stage lead_status values — do not write to lead_master.
-SKIP_LEAD_STATUSES = frozenset(
-    {
-        "journey_not_started",
-        "pan_not_verified",
-        "pan_mismatch",
-        "not_found",
-    }
 )
 
 LEADS_QUERY_TEMPLATE = """
@@ -216,29 +206,31 @@ def map_disburse_fields(item):
     return disburse_status, disburse_amount, disburse_datetime
 
 
-def update_lead_in_mysql(
+def persist_poll(
     lead_id,
-    disburse_status,
-    disburse_amount,
-    disburse_datetime,
     *,
+    response_json,
+    disburse_status=None,
+    disburse_amount=None,
+    disburse_datetime=None,
     user_id=None,
     application_id=None,
     lender_id=None,
-    response_json=None,
+    apply_to_lead_and_disbursals=True,
 ):
     conn = pymysql.connect(**MYSQL_CONFIG)
     try:
-        return apply_status_update(
+        return persist_lender_status_poll(
             conn,
             lead_id=lead_id,
+            response_json=response_json,
             disburse_status=disburse_status,
             disburse_amount=disburse_amount,
             disburse_datetime=disburse_datetime,
             user_id=user_id,
             application_id=application_id,
             lender_id=lender_id if lender_id is not None else TURANT_LENDER_ID,
-            response_json=response_json,
+            apply_to_lead_and_disbursals=apply_to_lead_and_disbursals,
         )
     except Exception:
         conn.rollback()
@@ -275,6 +267,7 @@ def process_turant_statuses(include_all=False):
     print(f"Unique phone+pan pairs to query: {len(keys)}")
 
     updated_count = 0
+    logged_only_count = 0
     skipped_count = skipped_missing
     failed_count = 0
     disbursals_count = 0
@@ -285,56 +278,47 @@ def process_turant_statuses(include_all=False):
 
         try:
             response_body = fetch_turant_status(phone, pan)
-            item = extract_status_payload(response_body)
-            if not item:
-                print(
-                    f"  Skipped: no usable status payload "
-                    f"(success={response_body.get('success')}, "
-                    f"message={response_body.get('message')!r})"
-                )
-                skipped_count += len(key_leads)
-                time.sleep(REQUEST_DELAY_SECONDS)
-                continue
-
+            item = extract_status_payload(response_body) or {}
             disburse_status, disburse_amount, disburse_datetime = map_disburse_fields(
                 item
             )
-            if not disburse_status:
-                print("  Skipped: lead_status empty in payload")
-                skipped_count += len(key_leads)
-                time.sleep(REQUEST_DELAY_SECONDS)
-                continue
-
-            status_key = disburse_status.strip().lower().replace(" ", "_")
-            if (
-                status_key in SKIP_LEAD_STATUSES
-                or disburse_status.strip().lower() in SKIP_LEAD_STATUSES
-            ):
-                print(f"  Skipped: soft status={disburse_status!r}")
-                skipped_count += len(key_leads)
-                time.sleep(REQUEST_DELAY_SECONDS)
-                continue
+            # Any JSON response for these leads is persisted. Soft statuses
+            # (journey_not_started, not_found, …) still write logs + mf_disbursals.
+            apply_full = isinstance(response_body, dict)
+            if not disburse_status and isinstance(response_body, dict):
+                disburse_status = normalize_value(
+                    response_body.get("message") or response_body.get("status")
+                )
 
             for lead in key_leads:
                 lead_id = lead["id"]
                 try:
-                    result = update_lead_in_mysql(
+                    result = persist_poll(
                         lead_id,
-                        disburse_status,
-                        disburse_amount,
-                        disburse_datetime,
+                        response_json=response_body,
+                        disburse_status=disburse_status,
+                        disburse_amount=disburse_amount,
+                        disburse_datetime=disburse_datetime,
                         user_id=lead.get("user_id"),
                         application_id=lead.get("application_id"),
                         lender_id=lead.get("lender_id") or TURANT_LENDER_ID,
-                        response_json=response_body,
+                        apply_to_lead_and_disbursals=apply_full,
                     )
-                    updated_count += 1
-                    print(
-                        f"  Updated lead_id={lead_id}: "
-                        f"disburse_status={disburse_status}, "
-                        f"disburse_amount={disburse_amount}, "
-                        f"disburse_datetime={disburse_datetime}"
-                    )
+                    if apply_full:
+                        updated_count += 1
+                        print(
+                            f"  Persisted lead_id={lead_id}: "
+                            f"disburse_status={disburse_status}, "
+                            f"disburse_amount={disburse_amount}, "
+                            f"disburse_datetime={disburse_datetime}, "
+                            f"status_log_id={result.get('status_log_id')}"
+                        )
+                    else:
+                        logged_only_count += 1
+                        print(
+                            f"  Logged (no apply) lead_id={lead_id}: "
+                            f"status_log_id={result.get('status_log_id')}"
+                        )
                     if result.get("disbursal"):
                         disbursals_count += 1
                         print(
@@ -342,21 +326,44 @@ def process_turant_statuses(include_all=False):
                             f"application_id={result.get('application_id')}, "
                             f"lender_id={result.get('lender_id')}"
                         )
-                    if result.get("status_log_id"):
-                        print(f"  status_log id={result.get('status_log_id')}")
                 except Exception as exc:
                     failed_count += 1
                     print(f"  Failed lead_id={lead_id}: {exc}", file=sys.stderr)
         except Exception as exc:
-            failed_count += len(key_leads)
+            # API hard-failure: still log the error payload for every lead.
+            error_payload = {"error": str(exc), "phone": phone}
+            for lead in key_leads:
+                lead_id = lead["id"]
+                try:
+                    result = persist_poll(
+                        lead_id,
+                        response_json=error_payload,
+                        disburse_status=None,
+                        user_id=lead.get("user_id"),
+                        application_id=lead.get("application_id"),
+                        lender_id=lead.get("lender_id") or TURANT_LENDER_ID,
+                        apply_to_lead_and_disbursals=False,
+                    )
+                    logged_only_count += 1
+                    print(
+                        f"  Logged error for lead_id={lead_id}: "
+                        f"status_log_id={result.get('status_log_id')}"
+                    )
+                except Exception as log_exc:
+                    failed_count += 1
+                    print(
+                        f"  Failed logging lead_id={lead_id}: {log_exc}",
+                        file=sys.stderr,
+                    )
             print(f"  Failed phone={phone}: {exc}", file=sys.stderr)
 
         time.sleep(REQUEST_DELAY_SECONDS)
 
     print()
     print(
-        f"Done. Updated={updated_count}, Skipped={skipped_count}, "
-        f"Failed={failed_count}, mf_disbursals={disbursals_count}"
+        f"Done. Updated={updated_count}, LoggedOnly={logged_only_count}, "
+        f"SkippedMissingKeys={skipped_count}, Failed={failed_count}, "
+        f"mf_disbursals={disbursals_count}"
     )
 
 

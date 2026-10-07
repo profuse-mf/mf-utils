@@ -27,7 +27,7 @@ from config import (
     CREDITSEA_STATUS_API_URL,
     db_config,
 )
-from mf_disbursals_store import apply_status_update
+from mf_disbursals_store import persist_lender_status_poll
 from mf_user_crypto import sql_aes_decrypt
 
 MYSQL_CONFIG = db_config()
@@ -190,24 +190,25 @@ def map_disburse_fields(loan):
     return disburse_status, disburse_amount, disburse_datetime
 
 
-def update_lead_in_mysql(
+def persist_poll(
     lead_id,
-    disburse_status,
-    disburse_amount,
-    disburse_datetime,
-    lender_ref_id=None,
     *,
+    response_json,
+    disburse_status=None,
+    disburse_amount=None,
+    disburse_datetime=None,
+    lender_ref_id=None,
     user_id=None,
     application_id=None,
     lender_id=None,
-    pending_step=None,
-    response_json=None,
+    apply_to_lead_and_disbursals=True,
 ):
     conn = pymysql.connect(**MYSQL_CONFIG)
     try:
-        return apply_status_update(
+        return persist_lender_status_poll(
             conn,
             lead_id=lead_id,
+            response_json=response_json,
             disburse_status=disburse_status,
             disburse_amount=disburse_amount,
             disburse_datetime=disburse_datetime,
@@ -215,8 +216,7 @@ def update_lead_in_mysql(
             application_id=application_id,
             lender_id=lender_id if lender_id is not None else CREDITSEA_LENDER_ID,
             lender_ref_id=lender_ref_id,
-            pending_step=pending_step,
-            response_json=response_json,
+            apply_to_lead_and_disbursals=apply_to_lead_and_disbursals,
         )
     except Exception:
         conn.rollback()
@@ -251,6 +251,7 @@ def process_creditsea_statuses(include_all=False):
     print(f"Unique phones to query: {len(phones)}")
 
     updated_count = 0
+    logged_only_count = 0
     skipped_count = skipped_missing_mobile
     failed_count = 0
     disbursals_count = 0
@@ -264,14 +265,38 @@ def process_creditsea_statuses(include_all=False):
                 f"    {json.dumps(response_body, ensure_ascii=False, default=str)}"
             )
         except Exception as exc:
-            failed_count += len(batch)
+            error_payload = {"error": str(exc), "phones": list(batch)}
+            for phone in batch:
+                for lead in leads_by_phone[phone]:
+                    lead_id = lead["id"]
+                    try:
+                        result = persist_poll(
+                            lead_id,
+                            response_json=error_payload,
+                            user_id=lead.get("user_id"),
+                            application_id=lead.get("application_id"),
+                            lender_id=lead.get("lender_id") or CREDITSEA_LENDER_ID,
+                            apply_to_lead_and_disbursals=False,
+                        )
+                        logged_only_count += 1
+                        print(
+                            f"  Logged error lead_id={lead_id}: "
+                            f"status_log_id={result.get('status_log_id')}"
+                        )
+                    except Exception as log_exc:
+                        failed_count += 1
+                        print(
+                            f"  Failed logging lead_id={lead_id}: {log_exc}",
+                            file=sys.stderr,
+                        )
             print(f"  Batch failed: {exc}", file=sys.stderr)
             time.sleep(REQUEST_DELAY_SECONDS)
             continue
 
-        data = response_body.get("data")
+        data = response_body.get("data") if isinstance(response_body, dict) else None
         if not isinstance(data, dict):
             data = {}
+        apply_full = isinstance(response_body, dict)
 
         for phone in batch:
             phone_leads = leads_by_phone[phone]
@@ -285,46 +310,48 @@ def process_creditsea_statuses(include_all=False):
             for lead in phone_leads:
                 lead_id = lead["id"]
                 try:
-                    loan = pick_loan_for_lead(loans, lead.get("lender_ref_id"))
-                    if not loan:
-                        print(f"  lead_id={lead_id} phone={phone}: no loan data")
-                        skipped_count += 1
-                        continue
-
+                    loan = pick_loan_for_lead(loans, lead.get("lender_ref_id")) or {}
                     disburse_status, disburse_amount, disburse_datetime = (
                         map_disburse_fields(loan)
                     )
-                    if not disburse_status:
-                        print(
-                            f"  lead_id={lead_id} phone={phone}: "
-                            f"empty loanStatus in payload"
+                    if not disburse_status and isinstance(response_body, dict):
+                        disburse_status = normalize_value(
+                            response_body.get("message")
+                            or response_body.get("status")
+                            or ("no_loan_data" if not loan else None)
                         )
-                        skipped_count += 1
-                        continue
-
                     api_lead_id = normalize_value(
                         loan.get("leadId")
                         or loan.get("leadID")
                         or loan.get("lead_id")
                     )
-                    result = update_lead_in_mysql(
+                    result = persist_poll(
                         lead_id,
-                        disburse_status,
-                        disburse_amount,
-                        disburse_datetime,
+                        response_json={
+                            "phone": phone,
+                            "loan": loan or None,
+                            "response": response_body,
+                        },
+                        disburse_status=disburse_status,
+                        disburse_amount=disburse_amount,
+                        disburse_datetime=disburse_datetime,
                         lender_ref_id=api_lead_id,
                         user_id=lead.get("user_id"),
                         application_id=lead.get("application_id"),
                         lender_id=lead.get("lender_id") or CREDITSEA_LENDER_ID,
-                        response_json={"phone": phone, "loan": loan},
+                        apply_to_lead_and_disbursals=apply_full,
                     )
-                    updated_count += 1
-                    print(
-                        f"  Updated lead_id={lead_id} phone={phone}: "
-                        f"disburse_status={disburse_status}, "
-                        f"disburse_amount={disburse_amount}, "
-                        f"disburse_datetime={disburse_datetime}"
-                    )
+                    if apply_full:
+                        updated_count += 1
+                        print(
+                            f"  Persisted lead_id={lead_id} phone={phone}: "
+                            f"disburse_status={disburse_status}, "
+                            f"disburse_amount={disburse_amount}, "
+                            f"disburse_datetime={disburse_datetime}, "
+                            f"status_log_id={result.get('status_log_id')}"
+                        )
+                    else:
+                        logged_only_count += 1
                     if result.get("disbursal"):
                         disbursals_count += 1
                         print(
@@ -340,8 +367,9 @@ def process_creditsea_statuses(include_all=False):
 
     print()
     print(
-        f"Done. Updated={updated_count}, Skipped={skipped_count}, "
-        f"Failed={failed_count}, mf_disbursals={disbursals_count}"
+        f"Done. Updated={updated_count}, LoggedOnly={logged_only_count}, "
+        f"SkippedMissingKeys={skipped_count}, Failed={failed_count}, "
+        f"mf_disbursals={disbursals_count}"
     )
 
 

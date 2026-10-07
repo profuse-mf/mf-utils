@@ -27,7 +27,7 @@ from config import (
     EMERGENCY_PAISA_STATUS_API_URL,
     db_config,
 )
-from mf_disbursals_store import apply_status_update
+from mf_disbursals_store import persist_lender_status_poll
 
 MYSQL_CONFIG = db_config()
 STALE_DAYS = 30
@@ -186,31 +186,31 @@ def map_disburse_fields(item):
     return disburse_status, disburse_amount, disburse_datetime
 
 
-def update_lead_in_mysql(
+def persist_poll(
     lead_id,
-    disburse_status,
-    disburse_amount,
-    disburse_datetime,
     *,
+    response_json,
+    disburse_status=None,
+    disburse_amount=None,
+    disburse_datetime=None,
     user_id=None,
     application_id=None,
     lender_id=None,
-    pending_step=None,
-    response_json=None,
+    apply_to_lead_and_disbursals=True,
 ):
     conn = pymysql.connect(**MYSQL_CONFIG)
     try:
-        return apply_status_update(
+        return persist_lender_status_poll(
             conn,
             lead_id=lead_id,
+            response_json=response_json,
             disburse_status=disburse_status,
             disburse_amount=disburse_amount,
             disburse_datetime=disburse_datetime,
             user_id=user_id,
             application_id=application_id,
             lender_id=lender_id if lender_id is not None else EMERGENCY_PAISA_LENDER_ID,
-            pending_step=pending_step,
-            response_json=response_json,
+            apply_to_lead_and_disbursals=apply_to_lead_and_disbursals,
         )
     except Exception:
         conn.rollback()
@@ -230,7 +230,7 @@ def process_emergency_paisa_statuses(include_all=False):
     print(f"Found {len(leads)} lead(s) ({window})")
 
     updated_count = 0
-    skipped_count = 0
+    logged_only_count = 0
     failed_count = 0
     disbursals_count = 0
 
@@ -241,42 +241,36 @@ def process_emergency_paisa_statuses(include_all=False):
 
         try:
             response_body = fetch_emergency_paisa_status(lender_ref_id)
-            item = extract_status_payload(response_body)
-            if not item:
-                data = response_body.get("data")
-                data_success = data.get("success") if isinstance(data, dict) else None
-                print(
-                    f"  Skipped: no usable status payload "
-                    f"(status={response_body.get('status')}, "
-                    f"success={data_success})"
-                )
-                skipped_count += 1
-                continue
-
+            item = extract_status_payload(response_body) or {}
             disburse_status, disburse_amount, disburse_datetime = map_disburse_fields(
                 item
             )
-            if not disburse_status:
-                print("  Skipped: lead_status empty in payload")
-                skipped_count += 1
-                continue
-
-            result = update_lead_in_mysql(
+            if not disburse_status and isinstance(response_body, dict):
+                disburse_status = normalize_value(
+                    response_body.get("status") or response_body.get("message")
+                )
+            apply_full = isinstance(response_body, dict)
+            result = persist_poll(
                 lead_id,
-                disburse_status,
-                disburse_amount,
-                disburse_datetime,
+                response_json=response_body,
+                disburse_status=disburse_status,
+                disburse_amount=disburse_amount,
+                disburse_datetime=disburse_datetime,
                 user_id=lead.get("user_id"),
                 application_id=lead.get("application_id"),
                 lender_id=lead.get("lender_id") or EMERGENCY_PAISA_LENDER_ID,
-                response_json=response_body,
+                apply_to_lead_and_disbursals=apply_full,
             )
-            updated_count += 1
-            print(
-                f"  Updated: disburse_status={disburse_status}, "
-                f"disburse_amount={disburse_amount}, "
-                f"disburse_datetime={disburse_datetime}"
-            )
+            if apply_full:
+                updated_count += 1
+                print(
+                    f"  Persisted: disburse_status={disburse_status}, "
+                    f"disburse_amount={disburse_amount}, "
+                    f"disburse_datetime={disburse_datetime}, "
+                    f"status_log_id={result.get('status_log_id')}"
+                )
+            else:
+                logged_only_count += 1
             if result.get("disbursal"):
                 disbursals_count += 1
                 print(
@@ -285,14 +279,33 @@ def process_emergency_paisa_statuses(include_all=False):
                     f"lender_id={result.get('lender_id')}"
                 )
         except Exception as exc:
-            failed_count += 1
+            try:
+                result = persist_poll(
+                    lead_id,
+                    response_json={
+                        "error": str(exc),
+                        "lender_ref_id": lender_ref_id,
+                    },
+                    user_id=lead.get("user_id"),
+                    application_id=lead.get("application_id"),
+                    lender_id=lead.get("lender_id") or EMERGENCY_PAISA_LENDER_ID,
+                    apply_to_lead_and_disbursals=False,
+                )
+                logged_only_count += 1
+                print(
+                    f"  Logged error status_log_id={result.get('status_log_id')}",
+                    file=sys.stderr,
+                )
+            except Exception as log_exc:
+                failed_count += 1
+                print(f"  Failed logging: {log_exc}", file=sys.stderr)
             print(f"  Failed: {exc}", file=sys.stderr)
 
         time.sleep(REQUEST_DELAY_SECONDS)
 
     print()
     print(
-        f"Done. Updated={updated_count}, Skipped={skipped_count}, "
+        f"Done. Updated={updated_count}, LoggedOnly={logged_only_count}, "
         f"Failed={failed_count}, mf_disbursals={disbursals_count}"
     )
 

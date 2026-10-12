@@ -1,4 +1,4 @@
-"""Meta Conversions API (CAPI) — fire Purchase on Success disbursals.
+"""Meta Conversions API (CAPI) — fire Disbursed on Success disbursals.
 
 Triggered whenever lead_master / mf_disbursals is written with a Success /
 DISBURSED status (via mf_disbursals_store or process_disbursals).
@@ -211,7 +211,7 @@ def fetch_user_for_application(cursor, application_id=None, user_id=None):
     return None
 
 
-def build_purchase_event(
+def build_disbursed_event(
     *,
     user,
     application_id,
@@ -245,7 +245,7 @@ def build_purchase_event(
     custom_data = {k: v for k, v in custom_data.items() if v is not None}
 
     event = {
-        "event_name": "Purchase",
+        "event_name": "Disbursed",
         "event_time": int(event_time or time.time()),
         "event_id": event_id
         or f"disbursal_{application_id}_{lender_id}_{hashed['user_data'].get('external_id', ['x'])[0][:12]}",
@@ -254,6 +254,10 @@ def build_purchase_event(
         "custom_data": custom_data,
     }
     return event
+
+
+# Back-compat alias
+build_purchase_event = build_disbursed_event
 
 
 def send_capi_events(events, *, test_event_code=None, timeout=30):
@@ -317,7 +321,7 @@ def notify_success_disbursal(
     test_event_code=None,
     silent=True,
 ):
-    """Send CAPI Purchase if d_status is Success/DISBURSED.
+    """Send CAPI Disbursed if d_status is Success/DISBURSED.
 
     Opens its own DB connection when cursor/conn not provided.
     Never raises when silent=True (default) — logs to stderr instead.
@@ -346,7 +350,7 @@ def notify_success_disbursal(
             f"disbursal_{application_id}_{lender_id}_"
             f"{uuid.uuid5(uuid.NAMESPACE_URL, f'{application_id}:{lender_id}:success').hex[:16]}"
         )
-        event = build_purchase_event(
+        event = build_disbursed_event(
             user=user,
             application_id=application_id,
             lender_id=lender_id,
@@ -386,7 +390,7 @@ def parse_args(argv=None):
     parser.add_argument(
         "--test-send",
         action="store_true",
-        help="Send a test Purchase event using META_CAPI_TEST_EVENT_CODE",
+        help="Send a test Disbursed event using META_CAPI_TEST_EVENT_CODE",
     )
     parser.add_argument("--application-id", type=int, default=None)
     parser.add_argument("--user-id", type=int, default=None)

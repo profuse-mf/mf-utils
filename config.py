@@ -252,7 +252,7 @@ RAMFINCORP_JWE_TTL_SEC = int(
     _env("RAM_FINCORP_JWE_TTL_SEC") or _env("RAMFINCORP_JWE_TTL_SEC") or "300"
 )
 
-# Meta Conversions API (CAPI) — Success disbursal Purchase events
+# Meta Conversions API (CAPI) — Success disbursal "Disbursed" events
 META_PIXEL_ID = _env("META_PIXEL_ID") or _env("META_DATASET_ID")
 META_DATASET_ID = _env("META_DATASET_ID") or META_PIXEL_ID
 META_CAPI_ACCESS_TOKEN = _env("META_CAPI_ACCESS_TOKEN")

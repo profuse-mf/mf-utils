@@ -252,6 +252,18 @@ RAMFINCORP_JWE_TTL_SEC = int(
     _env("RAM_FINCORP_JWE_TTL_SEC") or _env("RAMFINCORP_JWE_TTL_SEC") or "300"
 )
 
+# Meta Conversions API (CAPI) — Success disbursal Purchase events
+META_PIXEL_ID = _env("META_PIXEL_ID") or _env("META_DATASET_ID")
+META_DATASET_ID = _env("META_DATASET_ID") or META_PIXEL_ID
+META_CAPI_ACCESS_TOKEN = _env("META_CAPI_ACCESS_TOKEN")
+META_CAPI_TEST_EVENT_CODE = _env("META_CAPI_TEST_EVENT_CODE")
+META_CAPI_API_VERSION = _env("META_CAPI_API_VERSION", "v21.0")
+META_CAPI_ENABLED = _env("META_CAPI_ENABLED", "1").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
 # Trackier Clicks Report API
 # Docs: https://api-docs.trackier.io/docs/perf-admin-api-docs/e4a1e1388a249-clicks-report
 TRACKIER_API_KEY = _env("TRACKIER_API_KEY")

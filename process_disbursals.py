@@ -29,6 +29,7 @@ from config import (
 )
 from mf_disbursals_store import (
     DISBURSED_STATUSES,
+    is_capi_success_status,
     normalize_amount,
     normalize_disbursal_date,
     upsert_mf_disbursal,
@@ -427,6 +428,7 @@ def sync_file_rows(status_rows, preferred_lender_id):
     disbursals_inserted = 0
     disbursals_updated = 0
     updated_by_lender = defaultdict(int)
+    capi_pending = []
 
     conn = pymysql.connect(**DB_CONFIG)
     try:
@@ -473,12 +475,35 @@ def sync_file_rows(status_rows, preferred_lender_id):
                 else:
                     disbursals_updated += 1
 
+                if is_capi_success_status(status):
+                    capi_pending.append(
+                        {
+                            "user_id": user_id,
+                            "application_id": application_id,
+                            "lender_id": matched_lender_id,
+                            "d_status": status,
+                            "d_amount": row.get("d_amount"),
+                        }
+                    )
+
             conn.commit()
     except Exception:
         conn.rollback()
         raise
     finally:
         conn.close()
+
+    capi_sent = 0
+    if capi_pending:
+        try:
+            from meta_capi import notify_success_disbursal
+
+            for item in capi_pending:
+                result = notify_success_disbursal(**item)
+                if result.get("ok"):
+                    capi_sent += 1
+        except Exception as exc:
+            print(f"Meta CAPI batch error: {exc}", file=sys.stderr)
 
     return {
         "updated": updated,
@@ -487,6 +512,7 @@ def sync_file_rows(status_rows, preferred_lender_id):
         "alias_matched": alias_matched,
         "disbursals_inserted": disbursals_inserted,
         "disbursals_updated": disbursals_updated,
+        "capi_sent": capi_sent,
         "updated_by_lender": dict(updated_by_lender),
     }
 

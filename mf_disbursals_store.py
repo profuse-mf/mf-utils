@@ -22,6 +22,13 @@ DISBURSED_STATUSES = frozenset(
     }
 )
 
+# Statuses that trigger Meta CAPI Purchase (Success disbursal).
+CAPI_SUCCESS_STATUSES = frozenset({"success", "disbursed"})
+
+
+def is_capi_success_status(status):
+    return str(status or "").strip().lower() in CAPI_SUCCESS_STATUSES
+
 
 def normalize_amount(value):
     if value is None:
@@ -234,6 +241,23 @@ def persist_lender_status_poll(
         )
 
     conn.commit()
+
+    capi_result = None
+    if apply_to_lead_and_disbursals and is_capi_success_status(disburse_status):
+        try:
+            from meta_capi import notify_success_disbursal
+
+            capi_result = notify_success_disbursal(
+                user_id=user_id,
+                application_id=application_id,
+                lender_id=lender_id,
+                d_status=disburse_status,
+                d_amount=disburse_amount,
+            )
+        except Exception as exc:
+            # Never fail the status write because of CAPI.
+            capi_result = {"ok": False, "error": str(exc)}
+
     return {
         "user_id": user_id,
         "application_id": application_id,
@@ -241,6 +265,7 @@ def persist_lender_status_poll(
         "disbursal": disbursal_action,
         "status_log_id": status_log.get("log_id"),
         "applied": apply_to_lead_and_disbursals,
+        "capi": capi_result,
     }
 
 

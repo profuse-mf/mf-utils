@@ -32,6 +32,7 @@ import json
 import random
 import re
 import sys
+import uuid
 from collections import Counter
 from datetime import date, timedelta
 
@@ -245,6 +246,35 @@ CAMPAIGN_CHANNEL = "Email"
 CAMPAIGN_TEMPLATE = "TEMPL-1"
 CAMPAIGN_NAME = "D-1 Remarketing"
 
+# X-APIHEADER prefix for this campaign. Format (hyphen-separated; header-safe):
+#   mf-{user_id}-{application_id}-{lender_id}-{send_uuid12}
+# Echoed back on Events Pull as xapiheader → join to mf_email_sends.
+XAPIHEADER_PREFIX = "mf"
+
+ENSURE_EMAIL_SENDS_SQL = """
+CREATE TABLE IF NOT EXISTS mf_email_sends (
+    id BIGINT NOT NULL AUTO_INCREMENT,
+    channel VARCHAR(32) NOT NULL,
+    campaign_name VARCHAR(128) DEFAULT NULL,
+    campaign_id BIGINT DEFAULT NULL,
+    user_id BIGINT DEFAULT NULL,
+    application_id BIGINT DEFAULT NULL,
+    lender_id INT DEFAULT NULL,
+    email VARCHAR(255) NOT NULL,
+    xapiheader VARCHAR(255) NOT NULL,
+    message_id VARCHAR(100) DEFAULT NULL,
+    status VARCHAR(32) NOT NULL,
+    error_text TEXT,
+    created DATETIME NOT NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_email_sends_xapiheader (xapiheader),
+    KEY idx_email_sends_email (email),
+    KEY idx_email_sends_user (user_id),
+    KEY idx_email_sends_campaign (campaign_id),
+    KEY idx_email_sends_created (created)
+)
+"""
+
 
 def get_clickhouse_client():
     return clickhouse_connect.get_client(
@@ -437,7 +467,89 @@ def build_personalized_html(lendername, name, offer_amount, expiry_date, url):
     )
 
 
-def build_send_request(to_email, subject, html_body):
+def build_xapiheader(user_id, application_id, lender_id, send_uuid=None):
+    """Build Netcore X-APIHEADER for submit ↔ events correlation.
+
+    Example: mf-12345-67890-14-a1b2c3d4e5f6
+    Hyphens are header-safer than pipes; join uses the full string (indexed).
+    """
+    token = (send_uuid or uuid.uuid4().hex)[:12]
+    return (
+        f"{XAPIHEADER_PREFIX}-"
+        f"{int(user_id)}-"
+        f"{int(application_id)}-"
+        f"{int(lender_id)}-"
+        f"{token}"
+    )
+
+
+def ensure_email_sends_table(mysql_conn):
+    with mysql_conn.cursor() as cursor:
+        cursor.execute(ENSURE_EMAIL_SENDS_SQL)
+    mysql_conn.commit()
+
+
+def extract_message_id(result):
+    """Best-effort parse of Pepipost/Netcore submit response message_id."""
+    if result is None:
+        return None
+    if isinstance(result, dict):
+        data = result.get("data") if isinstance(result.get("data"), dict) else {}
+        for key in ("message_id", "messageId", "msgid", "msg_id"):
+            value = result.get(key) or data.get(key)
+            if value:
+                return str(value).strip()[:100]
+        return None
+    text = str(result)
+    try:
+        parsed = json.loads(text)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    return extract_message_id(parsed)
+
+
+def insert_email_send(
+    mysql_conn,
+    *,
+    email,
+    xapiheader,
+    user_id=None,
+    application_id=None,
+    lender_id=None,
+    campaign_id=None,
+    message_id=None,
+    status="submitted",
+    error_text=None,
+):
+    with mysql_conn.cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO mf_email_sends
+                (channel, campaign_name, campaign_id, user_id, application_id,
+                 lender_id, email, xapiheader, message_id, status, error_text, created)
+            VALUES
+                (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+            """,
+            (
+                CAMPAIGN_CHANNEL,
+                CAMPAIGN_NAME,
+                campaign_id,
+                user_id,
+                application_id,
+                lender_id,
+                email,
+                xapiheader,
+                message_id,
+                status,
+                (str(error_text)[:2000] if error_text else None),
+            ),
+        )
+        send_id = cursor.lastrowid
+    mysql_conn.commit()
+    return send_id
+
+
+def build_send_request(to_email, subject, html_body, xapiheader=None):
     body = Send()
     body.mfrom = From()
     body.mfrom.email = PEPIPOST_FROM_EMAIL
@@ -453,19 +565,22 @@ def build_send_request(to_email, subject, html_body):
     recipient.email = to_email
     recipient.name = to_email.split("@")[0]
     personalization.to = [recipient]
+    if xapiheader:
+        # Netcore echoes this on Events Pull / webhooks as X-APIHEADER / xapiheader.
+        personalization.headers = {"X-APIHEADER": xapiheader}
 
     body.personalizations = [personalization]
     body.tags = ["MoneyFatafat", "EligibleNotRedirected"]
     return body
 
 
-def send_email_via_pepipost(to_email, subject, html_body):
+def send_email_via_pepipost(to_email, subject, html_body, xapiheader=None):
     if not PEPIPOST_API_KEY:
         raise RuntimeError("PEPIPOST_API_KEY is not configured in .env")
 
     client = PepipostClient(PEPIPOST_API_KEY)
     mail_send_controller = client.mail_send
-    body = build_send_request(to_email, subject, html_body)
+    body = build_send_request(to_email, subject, html_body, xapiheader=xapiheader)
     return mail_send_controller.create_generatethemailsendrequest(body)
 
 
@@ -807,9 +922,16 @@ def process_eligible_not_redirected_emails(argv=None):
             print("No recipients found. Nothing to send.")
             return []
 
+        ensure_email_sends_table(mysql_conn)
+
         if not SEND_EMAILS:
             print("SEND_EMAILS=False — listing recipients only:")
             for job in jobs:
+                preview_header = build_xapiheader(
+                    job["user_id"],
+                    job["application_id"],
+                    job["lender_id"],
+                )
                 print(
                     f"  would send → {job['email']} | "
                     f"lender={job['lender_name']} | "
@@ -817,28 +939,55 @@ def process_eligible_not_redirected_emails(argv=None):
                     f"name={job['name']} | "
                     f"offer=₹{job['offer_amount']} | "
                     f"url={job['offer_url']} | "
-                    f"app={job['application_id']}"
+                    f"app={job['application_id']} | "
+                    f"xapiheader={preview_header}"
                 )
             return []
+
+        # Campaign row first so send-log rows can reference campaign_id.
+        campaign_id = insert_campaign_record(mysql_conn, 0, {})
 
         sent_jobs = []
         failed = 0
         for job in jobs:
             send_to = job["email"]
+            xapiheader = build_xapiheader(
+                job["user_id"],
+                job["application_id"],
+                job["lender_id"],
+            )
+            job["xapiheader"] = xapiheader
             print(
                 f"Sending to {send_to} "
                 f"(lender={job['lender_name']}, "
                 f"user_id={job['user_id']}, "
                 f"app={job['application_id']}, "
                 f"offer=₹{job['offer_amount']}, "
-                f"url={job['offer_url']})..."
+                f"url={job['offer_url']}, "
+                f"xapiheader={xapiheader})..."
             )
             try:
                 result = send_email_via_pepipost(
-                    send_to, job["subject"], job["html_body"]
+                    send_to,
+                    job["subject"],
+                    job["html_body"],
+                    xapiheader=xapiheader,
                 )
                 print("  Pepipost response (raw):")
                 print(f"    {format_pepipost_response(result)}")
+                message_id = extract_message_id(result)
+                insert_email_send(
+                    mysql_conn,
+                    email=send_to,
+                    xapiheader=xapiheader,
+                    user_id=job["user_id"],
+                    application_id=job["application_id"],
+                    lender_id=job["lender_id"],
+                    campaign_id=campaign_id,
+                    message_id=message_id,
+                    status="submitted",
+                )
+                job["message_id"] = message_id
                 sent_jobs.append(job)
             except APIException as exc:
                 failed += 1
@@ -850,15 +999,45 @@ def process_eligible_not_redirected_emails(argv=None):
                 if raw is not None:
                     print("  Pepipost response (raw):", file=sys.stderr)
                     print(f"    {format_pepipost_response(raw)}", file=sys.stderr)
+                try:
+                    insert_email_send(
+                        mysql_conn,
+                        email=send_to,
+                        xapiheader=xapiheader,
+                        user_id=job["user_id"],
+                        application_id=job["application_id"],
+                        lender_id=job["lender_id"],
+                        campaign_id=campaign_id,
+                        status="failed",
+                        error_text=str(exc),
+                    )
+                except Exception as log_exc:
+                    print(
+                        f"  Failed logging send for {send_to}: {log_exc}",
+                        file=sys.stderr,
+                    )
 
         stats = build_lender_stats(sent_jobs)
-        campaign_id = insert_campaign_record(
-            mysql_conn, len(sent_jobs), stats
-        )
+        with mysql_conn.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE mf_campaigns
+                SET submitted_count = %s,
+                    stats = CAST(%s AS JSON)
+                WHERE id = %s
+                """,
+                (
+                    len(sent_jobs),
+                    json.dumps(stats, ensure_ascii=False),
+                    campaign_id,
+                ),
+            )
+        mysql_conn.commit()
         print()
         print(
             f"Done. Sent={len(sent_jobs)}, Failed={failed}, "
-            f"mf_campaigns.id={campaign_id}, stats={stats}"
+            f"mf_campaigns.id={campaign_id}, "
+            f"mf_email_sends logged, stats={stats}"
         )
         return [job["email"] for job in sent_jobs]
     finally:

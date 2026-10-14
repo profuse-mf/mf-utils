@@ -74,7 +74,7 @@ OFFER_TYPES = (
     },
 )
 
-EMAIL_SUBJECT = "You left halfway — finish your MoneyFatafat application"
+EMAIL_SUBJECT = "Complete your pending application to avail instant loan offers"
 
 EMAIL_BODY_TEMPLATE = """
 <!DOCTYPE html>

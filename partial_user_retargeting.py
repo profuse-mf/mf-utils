@@ -29,7 +29,6 @@ from config import (
     PEPIPOST_FROM_NAME,
     WA_API_KEY as CONFIG_WA_API_KEY,
     WA_API_URL as CONFIG_WA_API_URL,
-    WA_TEMPLATE_ID as CONFIG_WA_TEMPLATE_ID,
     db_config,
 )
 from mf_user_crypto import sql_aes_decrypt
@@ -43,10 +42,18 @@ APPLY_URL = "https://moneyfatafat.com/apply"
 EMAIL_SOURCE = "partial_email_retargeting"
 WA_SOURCE = "partial_wa_retargeting"
 
+# WhatsApp button URL (Trackier campaign 215).
+WA_OFFER_URL = (
+    "https://profuse.gotrackier.com/click"
+    "?campaign_id=215&pub_id=302&source=API_repeat_user"
+)
+
 WA_API_URL = CONFIG_WA_API_URL or "https://utilsapi.smsmsg.in/waba/sendmessage"
 WA_API_KEY = CONFIG_WA_API_KEY or "e6eb44d10c5bea3233cf88e6dfa2b234"
-# Same style as wa_daily_reminder: placeholders=[name], button → /apply
-WA_TEMPLATE_ID = CONFIG_WA_TEMPLATE_ID
+# Partial-application update template:
+#   Hi {name} … Reference Name: {reference}
+#   placeholders = [name, user_id], button → WA_OFFER_URL
+WA_TEMPLATE_ID = "1415751517347573"
 
 CAMPAIGN_NAME = "Partial User Retargeting"
 EMAIL_TEMPLATE_LABEL = "PARTIAL-TEMPL-1"
@@ -294,7 +301,9 @@ def build_wa_jobs(users):
                 "user_id": user_id,
                 "phone": phone,
                 "name": format_user_name(user.get("name")),
-                "offer_url": build_apply_url(WA_SOURCE, user_id),
+                # Template "Reference Name" placeholder — use mf_users.id
+                "reference": str(user_id),
+                "offer_url": WA_OFFER_URL,
                 "created_date": user.get("created_date"),
             }
         )
@@ -364,17 +373,15 @@ def send_email_via_pepipost(to_email, subject, html_body):
 def send_whatsapp(job):
     if not WA_API_URL or not WA_API_KEY:
         raise RuntimeError("WA_API_URL / WA_API_KEY not configured")
-    if not WA_TEMPLATE_ID:
-        raise RuntimeError(
-            "WA_TEMPLATE_ID is not set in .env "
-            "(partial WA uses name + apply-button template)"
-        )
     payload = {
         "template": WA_TEMPLATE_ID,
         "phone": job["phone"],
         "is_short_url": "0",
         "message": {
-            "placeholders": [job["name"]],
+            "placeholders": [
+                job["name"],
+                job.get("reference") or str(job["user_id"]),
+            ],
             "button": {"url": job["offer_url"]},
         },
     }
@@ -569,6 +576,7 @@ def process_partial_user_retargeting(argv=None):
                         f"  would WA → {job['phone']} | "
                         f"user_id={job['user_id']} | "
                         f"name={job['name']} | "
+                        f"ref={job.get('reference')} | "
                         f"created={job.get('created_date')} | "
                         f"url={job['offer_url']}"
                     )

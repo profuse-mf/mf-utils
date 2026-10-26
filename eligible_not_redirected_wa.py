@@ -21,8 +21,10 @@ mf_disbursals.d_status in (Success, DISBURSED) — case-insensitive — for
 either lender_id 1 or 7.
 
 Target apps = A - B (- disbursed users for 1/7).
+Only these lenders are targeted: Toofanloan, Actoloan, Salary Brother,
+Salary Top Up, Rupeedhan, CreditSea, B4Salary, Paytrust.
 At most one WA message per user. If a user is eligible for multiple
-lenders/apps, prefer LENDER_PRIORITY (P1→P6); lenders not on that list
+lenders/apps, prefer LENDER_PRIORITY; lenders not on that list
 fall back to lowest lender_id. For the chosen lender, use the latest
 application_id for URL/amount.
 
@@ -84,16 +86,32 @@ DEFAULT_DAY_OFFSETS = (1, 2, 3, 5, 7, 10, 15)
 DISBURSAL_EXCLUDE_LENDER_IDS = (1, 7)
 DISBURSAL_EXCLUDE_STATUSES = ("success", "disbursed")
 
+# WA campaigns only target these lenders (status=1 still required).
+# IDs from mf_lenders / sync_trackier_clicks; names are fallback match keys.
+WA_TARGET_LENDER_IDS = frozenset({4, 12, 14, 15, 16, 18, 21, 23})
+WA_TARGET_LENDER_NAME_KEYS = (
+    "toofan",  # Toofanloan
+    "actoloan",
+    "salarybrother",
+    "salarytopup",
+    "rupeedhan",
+    "creditsea",
+    "b4salary",  # B4Salary / B$Salary
+    "paytrust",
+)
+
 # Lender priority when a user is eligible for multiple lenders (P1 highest).
-# Only status=1 lenders are loaded; names match mf_lenders.lender_name loosely.
+# Only allowlisted status=1 lenders are loaded; names match loosely.
 # Lenders not listed fall back to lowest lender_id.
 LENDER_PRIORITY = (
     (14, ("rupeedhan",)),  # P1 Rupeedhan
-    (None, ("toofan",)),  # P2 Toofan (id may vary; match by name)
+    (15, ("toofan",)),  # P2 Toofanloan
     (12, ("creditsea",)),  # P3 CreditSea
     (16, ("b4salary",)),  # P4 B4Salary
     (18, ("actoloan",)),  # P5 Actoloan
-    (20, ("fastrupees", "fastrupee")),  # P6 Fast Rupees
+    (21, ("paytrust",)),  # P6 Paytrust
+    (4, ("salarytopup",)),  # P7 Salary Top Up
+    (23, ("salarybrother",)),  # P8 Salary Brother
 )
 
 
@@ -160,7 +178,12 @@ def fetch_lenders(mysql_conn):
             ORDER BY id
             """
         )
-        return cursor.fetchall()
+        rows = cursor.fetchall()
+    return [
+        row
+        for row in rows
+        if is_wa_target_lender(row.get("id"), row.get("lender_name"))
+    ]
 
 
 def format_lender_display_name(lender_name, product_offering):
@@ -407,8 +430,18 @@ def normalize_lender_key(lender_name):
     return re.sub(r"[^a-z0-9]", "", (lender_name or "").lower())
 
 
+def is_wa_target_lender(lender_id, lender_name):
+    try:
+        if lender_id is not None and int(lender_id) in WA_TARGET_LENDER_IDS:
+            return True
+    except (TypeError, ValueError):
+        pass
+    key = normalize_lender_key(lender_name)
+    return any(token in key for token in WA_TARGET_LENDER_NAME_KEYS)
+
+
 def lender_priority_rank(lender_id, lender_name):
-    """Lower rank = higher priority. Unlisted lenders sort after P1–P6 by lender_id."""
+    """Lower rank = higher priority. Unlisted lenders sort after priority list by lender_id."""
     key = normalize_lender_key(lender_name)
     for index, (priority_id, names) in enumerate(LENDER_PRIORITY):
         if priority_id is not None and int(lender_id) == int(priority_id):

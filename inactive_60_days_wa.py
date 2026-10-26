@@ -5,9 +5,11 @@ Audience:
   created in the last 60 days.
 
 For each such user:
-  1. Run BRE against all mf_lenders with status=1 using mf_lender_rules
+  1. Run BRE against allowlisted mf_lenders with status=1 using mf_lender_rules
      (same evaluateRule logic as mf-api apply loan).
-  2. Keep only eligible lenders; sort by email LENDER_PRIORITY (P1→P6).
+     Allowlist: Toofanloan, Actoloan, Salary Brother, Salary Top Up,
+     Rupeedhan, CreditSea, B4Salary, Paytrust.
+  2. Keep only eligible lenders; sort by LENDER_PRIORITY.
   3. Need at least 2 eligible lenders — otherwise skip the user.
   4. Send WA template with placeholders [name, lender1, lender2].
 
@@ -45,14 +47,30 @@ OFFER_URL = (
     "?campaign_id=231&pub_id=304&source=WA_60_days&utm_channel=WA"
 )
 
-# Same priority as eligible_not_redirected_email.py (P1 highest).
+# WA campaigns only target these lenders (status=1 still required).
+# IDs from mf_lenders / sync_trackier_clicks; names are fallback match keys.
+WA_TARGET_LENDER_IDS = frozenset({4, 12, 14, 15, 16, 18, 21, 23})
+WA_TARGET_LENDER_NAME_KEYS = (
+    "toofan",  # Toofanloan
+    "actoloan",
+    "salarybrother",
+    "salarytopup",
+    "rupeedhan",
+    "creditsea",
+    "b4salary",  # B4Salary / B$Salary
+    "paytrust",
+)
+
+# Priority among allowlisted eligible lenders (P1 highest).
 LENDER_PRIORITY = (
     (14, ("rupeedhan",)),  # P1 Rupeedhan
-    (None, ("toofan",)),  # P2 Toofan
+    (15, ("toofan",)),  # P2 Toofanloan
     (12, ("creditsea",)),  # P3 CreditSea
     (16, ("b4salary",)),  # P4 B4Salary
     (18, ("actoloan",)),  # P5 Actoloan
-    (20, ("fastrupees", "fastrupee")),  # P6 Fast Rupees
+    (21, ("paytrust",)),  # P6 Paytrust
+    (4, ("salarytopup",)),  # P7 Salary Top Up
+    (23, ("salarybrother",)),  # P8 Salary Brother
 )
 
 INACTIVE_USERS_QUERY = f"""
@@ -122,8 +140,18 @@ def normalize_lender_key(lender_name):
     return re.sub(r"[^a-z0-9]", "", (lender_name or "").lower())
 
 
+def is_wa_target_lender(lender_id, lender_name):
+    try:
+        if lender_id is not None and int(lender_id) in WA_TARGET_LENDER_IDS:
+            return True
+    except (TypeError, ValueError):
+        pass
+    key = normalize_lender_key(lender_name)
+    return any(token in key for token in WA_TARGET_LENDER_NAME_KEYS)
+
+
 def lender_priority_rank(lender_id, lender_name):
-    """Lower rank = higher priority. Unlisted lenders sort after P1–P6 by lender_id."""
+    """Lower rank = higher priority. Unlisted lenders sort after priority list by lender_id."""
     key = normalize_lender_key(lender_name)
     for index, (priority_id, names) in enumerate(LENDER_PRIORITY):
         if priority_id is not None and int(lender_id) == int(priority_id):
@@ -177,20 +205,30 @@ def fetch_active_lenders(mysql_conn):
             ORDER BY id
             """
         )
-        return cursor.fetchall()
+        rows = cursor.fetchall()
+    return [
+        row
+        for row in rows
+        if is_wa_target_lender(row.get("id"), row.get("lender_name"))
+    ]
 
 
-def fetch_active_lender_rules(mysql_conn):
+def fetch_active_lender_rules(mysql_conn, lender_ids):
+    if not lender_ids:
+        return []
+    placeholders = ", ".join(["%s"] * len(lender_ids))
     with mysql_conn.cursor() as cursor:
         cursor.execute(
-            """
+            f"""
             SELECT r.*
             FROM mf_lender_rules r
             INNER JOIN mf_lenders l ON l.id = r.lender_id
             WHERE r.status = 1
               AND l.status = 1
+              AND r.lender_id IN ({placeholders})
             ORDER BY r.lender_id, r.id
-            """
+            """,
+            tuple(lender_ids),
         )
         return cursor.fetchall()
 
@@ -424,7 +462,8 @@ def process_inactive_60_days_whatsapp(argv=None):
             print(f"Filtered to --user-id={args.user_id}: {len(users)} user(s)")
 
         active_lenders = fetch_active_lenders(mysql_conn)
-        rules = fetch_active_lender_rules(mysql_conn)
+        lender_ids = [int(row["id"]) for row in active_lenders]
+        rules = fetch_active_lender_rules(mysql_conn, lender_ids)
         rules_by_lender = defaultdict(list)
         for rule in rules:
             rules_by_lender[int(rule["lender_id"])].append(rule)

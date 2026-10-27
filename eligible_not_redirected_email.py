@@ -246,8 +246,8 @@ CAMPAIGN_CHANNEL = "Email"
 CAMPAIGN_TEMPLATE = "TEMPL-1"
 CAMPAIGN_NAME = "D-1 Remarketing"
 
-# X-APIHEADER prefix for this campaign. Format (hyphen-separated; header-safe):
-#   mf-{user_id}-{application_id}-{lender_id}-{send_uuid12}
+# Correlation id sent as personalizations.token_to (v5 name for X-APIHEADER).
+# Format (hyphen-separated): mf-{user_id}-{application_id}-{lender_id}-{send_uuid12}
 # Echoed back on Events Pull as xapiheader → join to mf_email_sends.
 XAPIHEADER_PREFIX = "mf"
 
@@ -566,8 +566,9 @@ def build_send_request(to_email, subject, html_body, xapiheader=None):
     recipient.name = to_email.split("@")[0]
     personalization.to = [recipient]
     if xapiheader:
-        # Netcore echoes this on Events Pull / webhooks as X-APIHEADER / xapiheader.
-        personalization.headers = {"X-APIHEADER": xapiheader}
+        # v5+ API: X-APIHEADER is personalizations.token_to (not headers).
+        # Events Pull / webhooks echo it as xapiheader / X-APIHEADER.
+        personalization.token_to = xapiheader
 
     body.personalizations = [personalization]
     body.tags = ["MoneyFatafat", "EligibleNotRedirected"]

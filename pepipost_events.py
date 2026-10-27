@@ -23,6 +23,7 @@ import hashlib
 import html
 import json
 import smtplib
+import socket
 import sys
 import time
 import urllib.error
@@ -39,6 +40,8 @@ from config import (
     PEPIPOST_EVENTS_API_URL,
     PEPIPOST_EVENTS_LIMIT,
     PEPIPOST_EVENTS_LOOKBACK_DAYS,
+    PEPIPOST_EVENTS_RETRIES,
+    PEPIPOST_EVENTS_TIMEOUT,
     SMTP_FROM,
     SMTP_HOST,
     SMTP_PASSWORD,
@@ -50,6 +53,12 @@ from mf_user_crypto import sql_aes_decrypt, sql_aes_encrypt_param
 
 MYSQL_CONFIG = db_config()
 REQUEST_DELAY_SECONDS = 0.5
+REQUEST_TIMEOUT_SECONDS = max(30, int(PEPIPOST_EVENTS_TIMEOUT or 180))
+REQUEST_RETRIES = max(1, int(PEPIPOST_EVENTS_RETRIES or 3))
+
+
+class PepipostEventsTimeout(RuntimeError):
+    """Raised after retries when Netcore events read times out."""
 REPORT_EMAIL_TO = [
     "anup@profuseservices.com",
     "hiteshmittal@profuseservices.com",
@@ -202,6 +211,23 @@ def parse_args(argv=None):
         type=int,
         default=0,
         help="Stop after N pages (0 = all)",
+    )
+    parser.add_argument(
+        "--per-event",
+        action="store_true",
+        help=(
+            "Fetch each event type separately (lighter Netcore queries; "
+            "use when combined day fetches time out)"
+        ),
+    )
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=None,
+        help=(
+            f"HTTP read timeout seconds "
+            f"(default {REQUEST_TIMEOUT_SECONDS}, env PEPIPOST_EVENTS_TIMEOUT)"
+        ),
     )
     return parser.parse_args(argv)
 
@@ -356,7 +382,18 @@ def print_pepipost_raw_response(body, *, http_status=None):
     print(f"    {body if body else ''}")
 
 
-def fetch_events_page(params):
+def _is_timeout_error(exc):
+    if isinstance(exc, (TimeoutError, socket.timeout, PepipostEventsTimeout)):
+        return True
+    if isinstance(exc, urllib.error.URLError):
+        reason = exc.reason
+        if isinstance(reason, (TimeoutError, socket.timeout)):
+            return True
+        return "timed out" in str(reason).lower()
+    return "timed out" in str(exc).lower()
+
+
+def fetch_events_page(params, *, timeout=None, retries=None):
     query = urllib.parse.urlencode({k: v for k, v in params.items() if v is not None})
     url = f"{PEPIPOST_EVENTS_API_URL}?{query}"
     request = urllib.request.Request(
@@ -368,30 +405,52 @@ def fetch_events_page(params):
         },
         method="GET",
     )
-    try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            http_status = response.getcode()
-            body = response.read().decode("utf-8")
-            print_pepipost_raw_response(body, http_status=http_status)
-            return json.loads(body) if body else {}
-    except urllib.error.HTTPError as exc:
-        error_body = exc.read().decode("utf-8", errors="replace")
-        print_pepipost_raw_response(error_body, http_status=exc.code)
-        payload = {}
+    timeout_s = max(30, int(timeout or REQUEST_TIMEOUT_SECONDS))
+    attempts = max(1, int(retries or REQUEST_RETRIES))
+    last_exc = None
+
+    for attempt in range(1, attempts + 1):
         try:
-            payload = json.loads(error_body) if error_body else {}
-        except json.JSONDecodeError:
+            with urllib.request.urlopen(request, timeout=timeout_s) as response:
+                http_status = response.getcode()
+                body = response.read().decode("utf-8")
+                print_pepipost_raw_response(body, http_status=http_status)
+                return json.loads(body) if body else {}
+        except urllib.error.HTTPError as exc:
+            error_body = exc.read().decode("utf-8", errors="replace")
+            print_pepipost_raw_response(error_body, http_status=exc.code)
             payload = {}
-        # Empty / finished scroll windows come back as 400 completed — not fatal.
-        if exc.code in (400, 404) and is_extraction_completed_payload(payload):
+            try:
+                payload = json.loads(error_body) if error_body else {}
+            except json.JSONDecodeError:
+                payload = {}
+            # Empty / finished scroll windows come back as 400 completed — not fatal.
+            if exc.code in (400, 404) and is_extraction_completed_payload(payload):
+                print(
+                    f"    Netcore reports extraction completed "
+                    f"(HTTP {exc.code}); treating as empty page"
+                )
+                return {"data": [], "status": "completed"}
+            raise RuntimeError(
+                f"Pepipost events API error {exc.code}: {error_body}"
+            ) from exc
+        except (TimeoutError, socket.timeout, urllib.error.URLError) as exc:
+            last_exc = exc
+            if not _is_timeout_error(exc):
+                raise RuntimeError(f"Pepipost events request failed: {exc}") from exc
+            if attempt >= attempts:
+                break
+            sleep_s = min(30, 2 ** attempt)
             print(
-                f"    Netcore reports extraction completed "
-                f"(HTTP {exc.code}); treating as empty page"
+                f"    Timeout on attempt {attempt}/{attempts} "
+                f"(timeout={timeout_s}s); retrying in {sleep_s}s..."
             )
-            return {"data": [], "status": "completed"}
-        raise RuntimeError(
-            f"Pepipost events API error {exc.code}: {error_body}"
-        ) from exc
+            time.sleep(sleep_s)
+
+    raise PepipostEventsTimeout(
+        f"Pepipost events read timed out after {attempts} attempt(s) "
+        f"(timeout={timeout_s}s): {last_exc}"
+    )
 
 
 _SCROLLID_KEYS = (
@@ -763,7 +822,7 @@ def upsert_events(conn, rows):
     return len(values)
 
 
-def fetch_day_events(day, args, events, limit, *, label=None):
+def fetch_day_events(day, args, events, limit, *, label=None, timeout=None):
     """Fetch all pages for a single calendar day via scrollid, then offset.
 
     Returns (rows, truncated).
@@ -793,6 +852,9 @@ def fetch_day_events(day, args, events, limit, *, label=None):
     use_offset = False
     offset = 0
     truncated = False
+    req_timeout = timeout
+    if req_timeout is None and getattr(args, "timeout", None):
+        req_timeout = args.timeout
 
     while True:
         page += 1
@@ -808,7 +870,7 @@ def fetch_day_events(day, args, events, limit, *, label=None):
             else (f"scrollid={scrollid[:24]}…" if scrollid else "first page")
         )
         print(f"  {day_label} page {page} ({mode})")
-        payload = fetch_events_page(params)
+        payload = fetch_events_page(params, timeout=req_timeout)
         rows, next_scrollid = extract_rows_and_scrollid(payload)
         print(f"    Received {len(rows)} row(s); next_scrollid={bool(next_scrollid)}")
 
@@ -873,37 +935,65 @@ def fetch_day_events(day, args, events, limit, *, label=None):
     return day_rows, truncated
 
 
-def fetch_day_events_complete(day, args, events, limit):
-    """Fetch one day; if still truncated, retry each event type separately."""
-    rows, truncated = fetch_day_events(day, args, events, limit)
-    event_parts = [part.strip() for part in events.split(",") if part.strip()]
-
-    if truncated and len(event_parts) > 1:
-        print(
-            f"  {day}: combined fetch looks truncated ({len(rows)} rows); "
-            "retrying per event type"
+def _fetch_day_per_event_type(day, args, event_parts, limit, timeout=None):
+    merged = []
+    seen = set()
+    still_truncated = False
+    for event_type in event_parts:
+        part_rows, part_truncated = fetch_day_events(
+            day,
+            args,
+            event_type,
+            limit,
+            label=f"{day}/{event_type}",
+            timeout=timeout,
         )
-        merged = []
-        seen = set()
-        still_truncated = False
-        for event_type in event_parts:
-            part_rows, part_truncated = fetch_day_events(
-                day,
-                args,
-                event_type,
-                limit,
-                label=f"{day}/{event_type}",
+        still_truncated = still_truncated or part_truncated
+        for row in part_rows:
+            fp = row_fingerprint(row)
+            if fp in seen:
+                continue
+            seen.add(fp)
+            merged.append(row)
+        time.sleep(REQUEST_DELAY_SECONDS)
+    return merged, still_truncated
+
+
+def fetch_day_events_complete(day, args, events, limit):
+    """Fetch one day; if truncated or timed out, retry each event type separately."""
+    event_parts = [part.strip() for part in events.split(",") if part.strip()]
+    req_timeout = getattr(args, "timeout", None)
+    prefer_per_event = bool(getattr(args, "per_event", False)) and len(event_parts) > 1
+
+    if prefer_per_event:
+        print(f"  {day}: fetching per event type (--per-event)")
+        rows, truncated = _fetch_day_per_event_type(
+            day, args, event_parts, limit, timeout=req_timeout
+        )
+    else:
+        try:
+            rows, truncated = fetch_day_events(
+                day, args, events, limit, timeout=req_timeout
             )
-            still_truncated = still_truncated or part_truncated
-            for row in part_rows:
-                fp = row_fingerprint(row)
-                if fp in seen:
-                    continue
-                seen.add(fp)
-                merged.append(row)
-            time.sleep(REQUEST_DELAY_SECONDS)
-        rows = merged
-        truncated = still_truncated
+        except PepipostEventsTimeout as exc:
+            if len(event_parts) <= 1:
+                raise
+            print(
+                f"  {day}: combined fetch timed out ({exc}); "
+                "retrying per event type"
+            )
+            rows, truncated = _fetch_day_per_event_type(
+                day, args, event_parts, limit, timeout=req_timeout
+            )
+
+        if truncated and len(event_parts) > 1:
+            print(
+                f"  {day}: combined fetch looks truncated ({len(rows)} rows); "
+                "retrying per event type"
+            )
+            rows, truncated = _fetch_day_per_event_type(
+                day, args, event_parts, limit, timeout=req_timeout
+            )
 
     if truncated:
         print(f"  WARNING: {day} fetch may be incomplete ({len(rows)} rows)")
@@ -916,11 +1006,15 @@ def fetch_all_events(args):
     start, end = resolve_dates(args)
     events = resolve_events(args)
     limit = max(1, min(int(args.limit or 1000), 1000))
+    timeout_s = int(args.timeout or REQUEST_TIMEOUT_SECONDS)
 
     print(f"Pepipost events URL: {PEPIPOST_EVENTS_API_URL}")
     print(f"Date range: {start} → {end}")
     print(f"Events filter: {events}")
     print(f"Page limit: {limit}")
+    print(f"HTTP timeout: {timeout_s}s (retries={REQUEST_RETRIES})")
+    if getattr(args, "per_event", False):
+        print("Mode: per-event-type fetches")
     print("Fetching day-by-day with scrollid/offset pagination")
 
     all_rows = []

@@ -408,6 +408,22 @@ SELECT
 FROM {mysql_source("mf_installs")}
 """,
     ),
+    (
+        "mf_lender_rediections_stats",
+        f"""
+INSERT INTO mf_lender_rediections_stats
+(
+    id,
+    lender_id,
+    application_id
+)
+SELECT
+    toInt64(id),
+    CAST(lender_id AS Nullable(Int32)),
+    CAST(application_id AS Nullable(Int64))
+FROM {mysql_source("mf_lender_rediections_stats")}
+""",
+    ),
 ]
 
 

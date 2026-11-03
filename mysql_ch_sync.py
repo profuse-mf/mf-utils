@@ -356,16 +356,29 @@ def sync_table(client, table_name, insert_sql):
 
 
 def parse_args():
+    known = [name for name, _ in SYNC_TABLES]
     parser = argparse.ArgumentParser(description="Sync MySQL mf tables to ClickHouse")
     parser.add_argument("--ch-host", default=CLICKHOUSE_HOST)
     parser.add_argument("--ch-port", type=int, default=CLICKHOUSE_PORT)
     parser.add_argument("--ch-user", default=CLICKHOUSE_USER)
     parser.add_argument("--ch-password", default=CLICKHOUSE_PASSWORD)
     parser.add_argument("--ch-database", default=CLICKHOUSE_DATABASE)
+    parser.add_argument(
+        "--table",
+        "-t",
+        action="append",
+        dest="tables",
+        metavar="NAME",
+        choices=known,
+        help=(
+            "Sync only this table (repeatable). "
+            f"Choices: {', '.join(known)}. Default: all."
+        ),
+    )
     return parser.parse_args()
 
 
-def run_sync(host, port, user, password, database):
+def run_sync(host, port, user, password, database, tables=None):
     try:
         client = verify_clickhouse_connection(host, port, user, password, database)
     except Exception as exc:
@@ -382,10 +395,22 @@ def run_sync(host, port, user, password, database):
         )
         raise
 
+    selected = set(tables) if tables else None
+    synced = []
     for table_name, insert_sql in SYNC_TABLES:
+        if selected is not None and table_name not in selected:
+            continue
         sync_table(client, table_name, insert_sql)
+        synced.append(table_name)
 
-    print(f"[{datetime.now().isoformat(timespec='seconds')}] All tables synced successfully")
+    if not synced:
+        raise RuntimeError("No matching tables to sync")
+
+    label = ", ".join(synced)
+    print(
+        f"[{datetime.now().isoformat(timespec='seconds')}] "
+        f"Synced successfully: {label}"
+    )
 
 
 if __name__ == "__main__":
@@ -397,6 +422,7 @@ if __name__ == "__main__":
             args.ch_user,
             args.ch_password,
             args.ch_database,
+            tables=args.tables,
         )
     except Exception as exc:
         print(f"Sync failed: {exc}", file=sys.stderr)

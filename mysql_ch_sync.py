@@ -286,6 +286,42 @@ SELECT
 FROM {mysql_source("mf_disbursals")}
 """,
     ),
+    (
+        "mf_email_sends",
+        f"""
+INSERT INTO mf_email_sends
+(
+    id,
+    channel,
+    campaign_name,
+    campaign_id,
+    user_id,
+    application_id,
+    lender_id,
+    email,
+    xapiheader,
+    message_id,
+    status,
+    error_text,
+    created
+)
+SELECT
+    toInt64(id),
+    toString(channel),
+    CAST(campaign_name AS Nullable(String)),
+    CAST(campaign_id AS Nullable(Int64)),
+    CAST(user_id AS Nullable(Int64)),
+    CAST(application_id AS Nullable(Int64)),
+    CAST(lender_id AS Nullable(Int32)),
+    toString(email),
+    toString(xapiheader),
+    CAST(message_id AS Nullable(String)),
+    toString(status),
+    CAST(error_text AS Nullable(String)),
+    toDateTime(created)
+FROM {mysql_source("mf_email_sends")}
+""",
+    ),
 ]
 
 

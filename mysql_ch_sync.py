@@ -262,6 +262,30 @@ SELECT
 FROM {mysql_source("mf_users")}
 """,
     ),
+    (
+        "mf_disbursals",
+        f"""
+INSERT INTO mf_disbursals
+(
+    id,
+    user_id,
+    application_id,
+    lender_id,
+    d_status,
+    d_amount,
+    d_date
+)
+SELECT
+    toInt32(id),
+    CAST(user_id AS Nullable(Int32)),
+    CAST(application_id AS Nullable(Int32)),
+    CAST(lender_id AS Nullable(Int32)),
+    CAST(d_status AS Nullable(String)),
+    CAST(d_amount AS Nullable(String)),
+    CAST(d_date AS Nullable(Date))
+FROM {mysql_source("mf_disbursals")}
+""",
+    ),
 ]
 
 

@@ -28,7 +28,7 @@ lenders/apps, prefer LENDER_PRIORITY; lenders not on that list
 fall back to lowest lender_id. For the chosen lender, use the latest
 application_id for URL/amount.
 
-WA payload (template 982121851603771):
+WA payload (template 1849768949383002):
   placeholders = [Name, OfferAmount/- , LenderName]
   button.url = Trackier / fallback URL with wa_remarketing params
   phone = 10-digit mobile (no +91 prefix)
@@ -64,7 +64,7 @@ MYSQL_CONFIG = db_config()
 
 WA_API_URL = "https://utilsapi.smsmsg.in/waba/sendmessage"
 WA_API_KEY = "e6eb44d10c5bea3233cf88e6dfa2b234"
-WA_TEMPLATE_ID = "982121851603771"
+WA_TEMPLATE_ID = "1849768949383002"
 SEND_MESSAGES = True
 CAMPAIGN_CHANNEL = "WA"
 CAMPAIGN_NAME = "D-1 Remarketing"

@@ -424,6 +424,34 @@ SELECT
 FROM {mysql_source("mf_lender_rediections_stats")}
 """,
     ),
+    (
+        "mf_lender_status_logs",
+        f"""
+INSERT INTO mf_lender_status_logs
+(
+    id,
+    lead_id,
+    application_id,
+    user_id,
+    lender_id,
+    lender_ref_id,
+    status,
+    response_json,
+    created
+)
+SELECT
+    toInt64(id),
+    CAST(lead_id AS Nullable(Int64)),
+    CAST(application_id AS Nullable(Int64)),
+    CAST(user_id AS Nullable(Int32)),
+    toInt32(lender_id),
+    CAST(lender_ref_id AS Nullable(String)),
+    CAST(status AS Nullable(String)),
+    CAST(toString(response_json) AS Nullable(String)),
+    toDateTime(created)
+FROM {mysql_source("mf_lender_status_logs")}
+""",
+    ),
 ]
 
 

@@ -1,7 +1,7 @@
 """Hourly acquisition summary email.
 
 Counts for the previous complete clock hour (e.g. run at 10:02 → 09:00–10:00):
-  - users created (mf_users.created_date)
+  - users created (mf_users.created — datetime; not created_date)
   - applications received (application_master.created)
 
 Recipients: MF_REPORT_EMAIL_TO (same list as Trackier / MIS reports).
@@ -60,8 +60,8 @@ def fetch_counts(mysql_conn, start, end):
             """
             SELECT COUNT(*) AS cnt
             FROM mf_users
-            WHERE created_date >= %s
-              AND created_date < %s
+            WHERE created >= %s
+              AND created < %s
             """,
             (start, end),
         )

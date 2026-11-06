@@ -332,8 +332,10 @@ def insert_redirection(mysql_conn, lender_id, application_id):
     with mysql_conn.cursor() as cursor:
         cursor.execute(
             """
-            INSERT INTO mf_lender_rediections_stats (lender_id, application_id)
-            VALUES (%s, %s)
+            INSERT INTO mf_lender_rediections_stats
+                (lender_id, application_id, created_date, created)
+            VALUES
+                (%s, %s, NOW(), CURDATE())
             """,
             (lender_id, application_id),
         )

@@ -415,12 +415,16 @@ INSERT INTO mf_lender_rediections_stats
 (
     id,
     lender_id,
-    application_id
+    application_id,
+    created_date,
+    created
 )
 SELECT
     toInt64(id),
     CAST(lender_id AS Nullable(Int32)),
-    CAST(application_id AS Nullable(Int64))
+    CAST(application_id AS Nullable(Int64)),
+    CAST(created_date AS Nullable(DateTime)),
+    CAST(created AS Nullable(Date))
 FROM {mysql_source("mf_lender_rediections_stats")}
 """,
     ),

@@ -1,0 +1,7 @@
+-- Status width notes (as of ops change):
+--   lead_master.disburse_status  → TEXT
+--   mf_disbursals.d_status       → TEXT
+--   mf_lender_status_master.status → VARCHAR(500)
+--
+-- process_disbursals.py does not truncate statuses; VARCHAR(500) on
+-- mf_lender_status_master is the remaining length limit for new status codes.

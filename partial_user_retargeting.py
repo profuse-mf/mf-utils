@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import re
 import sys
 from collections import Counter
@@ -50,10 +51,20 @@ WA_OFFER_URL = (
 
 WA_API_URL = CONFIG_WA_API_URL or "https://utilsapi.smsmsg.in/waba/sendmessage"
 WA_API_KEY = CONFIG_WA_API_KEY or "e6eb44d10c5bea3233cf88e6dfa2b234"
-# Partial-application update template:
-#   Hi {name} … Reference Name: {reference}
-#   placeholders = [name, user_id], button → WA_OFFER_URL
-WA_TEMPLATE_ID = "1415751517347573"
+# Partial-application update template 1138503858671462:
+#   Dear {{name}} … Reference Amount: {{amt}}
+#   placeholders = [name, amt], button → WA_OFFER_URL
+WA_TEMPLATE_ID = "1138503858671462"
+WA_REFERENCE_AMOUNTS = (
+    25000,
+    28000,
+    30000,
+    32000,
+    35000,
+    37000,
+    40000,
+    45000,
+)
 
 CAMPAIGN_NAME = "Partial User Retargeting"
 EMAIL_TEMPLATE_LABEL = "PARTIAL-TEMPL-1"
@@ -203,8 +214,14 @@ def resolve_target_dates(today=None):
 
 def format_user_name(name):
     if not name or not str(name).strip():
-        return "there"
+        return "User"
     return " ".join(word.capitalize() for word in str(name).strip().split())
+
+
+def format_wa_reference_amount(amount=None):
+    if amount is None:
+        amount = random.choice(WA_REFERENCE_AMOUNTS)
+    return f"{int(amount):,}"
 
 
 def format_phone(mobile):
@@ -301,8 +318,7 @@ def build_wa_jobs(users):
                 "user_id": user_id,
                 "phone": phone,
                 "name": format_user_name(user.get("name")),
-                # Template "Reference Name" placeholder — use mf_users.id
-                "reference": str(user_id),
+                "offer_amount": format_wa_reference_amount(),
                 "offer_url": WA_OFFER_URL,
                 "created_date": user.get("created_date"),
             }
@@ -380,7 +396,7 @@ def send_whatsapp(job):
         "message": {
             "placeholders": [
                 job["name"],
-                job.get("reference") or str(job["user_id"]),
+                job.get("offer_amount") or format_wa_reference_amount(),
             ],
             "button": {"url": job["offer_url"]},
         },
@@ -576,7 +592,7 @@ def process_partial_user_retargeting(argv=None):
                         f"  would WA → {job['phone']} | "
                         f"user_id={job['user_id']} | "
                         f"name={job['name']} | "
-                        f"ref={job.get('reference')} | "
+                        f"amt={job.get('offer_amount')} | "
                         f"created={job.get('created_date')} | "
                         f"url={job['offer_url']}"
                     )

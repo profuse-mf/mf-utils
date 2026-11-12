@@ -4,8 +4,9 @@ Triggered whenever lead_master / mf_disbursals is written with a Success /
 DISBURSED status (via mf_disbursals_store or process_disbursals).
 
 User matching from mf_users (for the application):
-  hashed: name (fn/ln), age, email, phone, dob→db
-  raw:    fbp, fbc, attrid (sent as fbclid / used to build fbc)
+  hashed: name (fn/ln), age, email, phone, dob→db, zp (res_pincode)
+  raw:    fbp, fbc, attrid (sent as fbclid / used to build fbc),
+          client_ip_address (mf_user_info.publicip, else latest mf_installs.publicip)
 
 Uses META_PIXEL_ID / META_CAPI_ACCESS_TOKEN / META_CAPI_TEST_EVENT_CODE from config.
 """
@@ -112,6 +113,27 @@ def _build_fbc(fbc, attrid):
     return f"fb.1.{int(time.time())}.{fbclid}"
 
 
+def _normalize_pincode(value):
+    """Meta zp: lowercase, no spaces/dashes; Indian PIN → 6 digits."""
+    digits = re.sub(r"\D", "", str(value or ""))
+    if len(digits) >= 6:
+        return digits[:6]
+    return digits or None
+
+
+def _normalize_client_ip(value):
+    text = str(value or "").strip()
+    if not text or text.lower() in ("null", "undefined", "unknown"):
+        return None
+    # Strip port / brackets if present.
+    if text.startswith("[") and "]" in text:
+        text = text[1 : text.index("]")]
+    if text.count(":") == 1 and "." in text:
+        # IPv4:port
+        text = text.rsplit(":", 1)[0]
+    return text or None
+
+
 def hash_user_data(user):
     """Build Meta user_data + extras from a mf_users row dict."""
     email = _normalize_email(user.get("email"))
@@ -119,6 +141,14 @@ def hash_user_data(user):
     first, last = _split_name(user.get("name"))
     dob = _parse_dob(user.get("dob"))
     age = _age_from_dob(dob)
+    pincode = _normalize_pincode(
+        user.get("res_pincode") or user.get("pincode") or user.get("zp")
+    )
+    client_ip = _normalize_client_ip(
+        user.get("client_ip")
+        or user.get("publicip")
+        or user.get("client_ip_address")
+    )
 
     user_data = {}
     em = _sha256_normalize(email) if email else None
@@ -126,6 +156,7 @@ def hash_user_data(user):
     fn = _sha256_normalize(first) if first else None
     ln = _sha256_normalize(last) if last else None
     db = _sha256_normalize(dob.strftime("%Y%m%d")) if dob else None
+    zp = _sha256_normalize(pincode) if pincode else None
     age_hash = _sha256_normalize(str(age)) if age is not None else None
 
     if em:
@@ -138,6 +169,8 @@ def hash_user_data(user):
         user_data["ln"] = [ln]
     if db:
         user_data["db"] = [db]
+    if zp:
+        user_data["zp"] = [zp]
     if user.get("user_id") is not None:
         ext = _sha256_normalize(str(user["user_id"]))
         if ext:
@@ -149,6 +182,9 @@ def hash_user_data(user):
         user_data["fbp"] = fbp
     if fbc:
         user_data["fbc"] = fbc
+    # Meta: client_ip_address must NOT be hashed.
+    if client_ip:
+        user_data["client_ip_address"] = client_ip
 
     return {
         "user_data": user_data,
@@ -156,6 +192,47 @@ def hash_user_data(user):
         "age_hash": age_hash,
         "fbclid": (user.get("attrid") or "").strip() or None,
     }
+
+
+def _fetch_client_ip_for_user(cursor, user_id):
+    """Prefer mf_user_info.publicip, else latest mf_installs.publicip."""
+    if user_id is None:
+        return None
+    uid = int(user_id)
+
+    queries = (
+        """
+        SELECT publicip
+        FROM mf_user_info
+        WHERE userid = %s
+          AND publicip IS NOT NULL
+          AND TRIM(publicip) != ''
+        LIMIT 1
+        """,
+        """
+        SELECT publicip
+        FROM mf_installs
+        WHERE userid = %s
+          AND publicip IS NOT NULL
+          AND TRIM(publicip) != ''
+        ORDER BY COALESCE(lastseen, firstseen) DESC, id DESC
+        LIMIT 1
+        """,
+    )
+    for sql in queries:
+        try:
+            cursor.execute(sql, (uid,))
+            row = cursor.fetchone()
+            if not row:
+                continue
+            ip = _normalize_client_ip(row.get("publicip") if isinstance(row, dict) else row[0])
+            if ip:
+                return ip
+        except Exception as exc:
+            if "unknown column" in str(exc).lower() or "doesn't exist" in str(exc).lower():
+                continue
+            raise
+    return None
 
 
 def fetch_user_for_application(cursor, application_id=None, user_id=None):
@@ -169,6 +246,7 @@ def fetch_user_for_application(cursor, application_id=None, user_id=None):
             u.id AS user_id,
             u.name,
             u.dob,
+            u.res_pincode,
             {sql_aes_decrypt("u.email", "email")},
             {sql_aes_decrypt("u.mobile", "mobile")}
             {{extra}}
@@ -187,6 +265,7 @@ def fetch_user_for_application(cursor, application_id=None, user_id=None):
         where = "am.id = %s"
         params = (int(application_id),)
 
+    row = None
     for extra in (
         ", u.fbp, u.fbc, u.attrid",
         ", u.fbp, u.fbc, u.fbclid AS attrid",
@@ -202,13 +281,24 @@ def fetch_user_for_application(cursor, application_id=None, user_id=None):
                 row["fbp"] = None
             if row and "fbc" not in row:
                 row["fbc"] = None
-            return row
+            if row and "res_pincode" not in row:
+                row["res_pincode"] = None
+            break
         except Exception as exc:
             msg = str(exc).lower()
             if "unknown column" in msg:
+                # res_pincode missing — retry without it once.
+                if "res_pincode" in msg:
+                    base_select = base_select.replace("u.res_pincode,", "")
                 continue
             raise
-    return None
+
+    if not row:
+        return None
+
+    if not row.get("client_ip") and not row.get("publicip"):
+        row["client_ip"] = _fetch_client_ip_for_user(cursor, row.get("user_id"))
+    return row
 
 
 def build_disbursed_event(

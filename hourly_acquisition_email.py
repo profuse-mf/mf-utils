@@ -35,11 +35,23 @@ from config import (
 MYSQL_CONFIG = db_config()
 
 
+HOURLY_EMAIL_EXCLUDE = {
+    "rishi.saraf@profuseservices.com",
+}
+
+
 def report_email_recipients():
-    """Same recipient remapping as sync_trackier_clicks / MIS."""
+    """Same recipient remapping as sync_trackier_clicks / MIS.
+
+    Excludes HOURLY_EMAIL_EXCLUDE (hourly mail only; shared MF_REPORT_EMAIL_TO
+    is unchanged for other reports).
+    """
     recipients = []
     for email in MF_REPORT_EMAIL_TO:
-        if email.strip().lower() == "anup.vaze@appkhichadi.com":
+        normalized = email.strip().lower()
+        if normalized in HOURLY_EMAIL_EXCLUDE:
+            continue
+        if normalized == "anup.vaze@appkhichadi.com":
             recipients.append("anup@profuseservices.com")
         else:
             recipients.append(email)

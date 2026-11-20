@@ -13,7 +13,7 @@ For each such user:
   3. Need at least 2 eligible lenders — otherwise skip the user.
   4. Send WA template with placeholders [name, lender1, lender2].
 
-WA template 1344586910943344:
+WA template 1675845367243642 :
   placeholders = [Name, LenderName1, LenderName2]
   button.url = fixed Trackier campaign with source=WA_60_days
 """
@@ -36,7 +36,7 @@ MYSQL_CONFIG = db_config()
 
 WA_API_URL = "https://utilsapi.smsmsg.in/waba/sendmessage"
 WA_API_KEY = "e6eb44d10c5bea3233cf88e6dfa2b234"
-WA_TEMPLATE_ID = "1344586910943344"
+WA_TEMPLATE_ID = "1675845367243642"
 SEND_MESSAGES = True
 CAMPAIGN_CHANNEL = "WA"
 CAMPAIGN_NAME = "60 Days Inactive"

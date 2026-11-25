@@ -57,26 +57,6 @@ def _ch_decrypt_mysql_aes(column):
 
 SYNC_TABLES = [
     (
-        "application_bre_logs",
-        f"""
-INSERT INTO application_bre_logs
-(
-    id,
-    application_id,
-    lender_id,
-    criteria_missed,
-    created
-)
-SELECT
-    toUInt64(id),
-    toUInt64(application_id),
-    toUInt64(lender_id),
-    ifNull(toString(criteria_missed), ''),
-    ifNull(created, now())
-FROM {mysql_source("application_bre_logs")}
-""",
-    ),
-    (
         "application_master",
         f"""
 INSERT INTO application_master
@@ -155,36 +135,6 @@ FROM {mysql_source("lead_master")}
 """,
     ),
     (
-        "lender_api_logs",
-        f"""
-INSERT INTO lender_api_logs
-(
-    id,
-    application_id,
-    user_id,
-    lead_id,
-    lenderid,
-    apiname,
-    apirequest,
-    apiresponse,
-    created_at,
-    created
-)
-SELECT
-    toUInt64(id),
-    toUInt64(ifNull(application_id, 0)),
-    toUInt64(ifNull(user_id, 0)),
-    toUInt64(ifNull(lead_id, 0)),
-    toUInt16(ifNull(lenderid, 0)),
-    ifNull(apiname, ''),
-    ifNull(toString(apirequest), ''),
-    ifNull(toString(apiresponse), ''),
-    ifNull(created_at, now()),
-    ifNull(created, today())
-FROM {mysql_source("lender_api_logs")}
-""",
-    ),
-    (
         "mf_users",
         f"""
 INSERT INTO mf_users
@@ -260,66 +210,6 @@ SELECT
     toUInt8(ifNull(has_current_income_or_support, 0)),
     ifNull(current_income_source, '')
 FROM {mysql_source("mf_users")}
-""",
-    ),
-    (
-        "mf_disbursals",
-        f"""
-INSERT INTO mf_disbursals
-(
-    id,
-    user_id,
-    application_id,
-    lender_id,
-    d_status,
-    d_amount,
-    d_date
-)
-SELECT
-    toInt32(id),
-    CAST(user_id AS Nullable(Int32)),
-    CAST(application_id AS Nullable(Int32)),
-    CAST(lender_id AS Nullable(Int32)),
-    CAST(d_status AS Nullable(String)),
-    CAST(d_amount AS Nullable(String)),
-    CAST(d_date AS Nullable(Date))
-FROM {mysql_source("mf_disbursals")}
-""",
-    ),
-    (
-        "mf_email_sends",
-        f"""
-INSERT INTO mf_email_sends
-(
-    id,
-    channel,
-    campaign_name,
-    campaign_id,
-    user_id,
-    application_id,
-    lender_id,
-    email,
-    xapiheader,
-    message_id,
-    status,
-    error_text,
-    created
-)
-SELECT
-    toInt64(id),
-    toString(channel),
-    CAST(campaign_name AS Nullable(String)),
-    CAST(campaign_id AS Nullable(Int64)),
-    CAST(user_id AS Nullable(Int64)),
-    CAST(application_id AS Nullable(Int64)),
-    CAST(lender_id AS Nullable(Int32)),
-    toString(email),
-    toString(xapiheader),
-    CAST(message_id AS Nullable(String)),
-    toString(status),
-    CAST(error_text AS Nullable(String)),
-    toDateTime(created)
-FROM {mysql_source("mf_email_sends")}
 """,
     ),
     (
@@ -406,54 +296,6 @@ SELECT
     CAST(devtype AS Nullable(String)),
     CAST(osname AS Nullable(String))
 FROM {mysql_source("mf_installs")}
-""",
-    ),
-    (
-        "mf_lender_rediections_stats",
-        f"""
-INSERT INTO mf_lender_rediections_stats
-(
-    id,
-    lender_id,
-    application_id,
-    created_date,
-    created
-)
-SELECT
-    toInt64(id),
-    CAST(lender_id AS Nullable(Int32)),
-    CAST(application_id AS Nullable(Int64)),
-    CAST(created_date AS Nullable(DateTime)),
-    CAST(created AS Nullable(Date))
-FROM {mysql_source("mf_lender_rediections_stats")}
-""",
-    ),
-    (
-        "mf_lender_status_logs",
-        f"""
-INSERT INTO mf_lender_status_logs
-(
-    id,
-    lead_id,
-    application_id,
-    user_id,
-    lender_id,
-    lender_ref_id,
-    status,
-    response_json,
-    created
-)
-SELECT
-    toInt64(id),
-    CAST(lead_id AS Nullable(Int64)),
-    CAST(application_id AS Nullable(Int64)),
-    CAST(user_id AS Nullable(Int32)),
-    toInt32(lender_id),
-    CAST(lender_ref_id AS Nullable(String)),
-    CAST(status AS Nullable(String)),
-    CAST(toString(response_json) AS Nullable(String)),
-    toDateTime(created)
-FROM {mysql_source("mf_lender_status_logs")}
 """,
     ),
     (

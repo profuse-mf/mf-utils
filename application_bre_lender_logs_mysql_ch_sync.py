@@ -92,7 +92,7 @@ WHERE created >= '{start_date}'
     WHERE created_at >= '{start_date}'
   AND created_at < '{end_date}'
     """,
-        )(
+        ),(
                 "mf_disbursals",
                 f"""
         INSERT INTO mf_disbursals

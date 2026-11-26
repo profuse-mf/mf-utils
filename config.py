@@ -346,3 +346,22 @@ def db_config(database=None, autocommit=None):
 
 # mf_users.mobile / email / pan are AES_ENCRYPT'd at rest (MySQL).
 MF_USERS_AES_KEY = _env("MF_USERS_AES_KEY", "tripleseven7")
+
+#Fastsalary lead status api details
+FASTSALARY_BASE_URL =(_env("FASTSALARY_BASE_URL")
+    or "https://apilm.fastsalary.com/api/v1/marketplace/profuse"
+).rstrip("/")
+FASTSALARY_STATUS_PATH = _env("FASTSALARY_STATUS_PATH", "/status")
+
+FASTSALARY_ACCESS_KEY = _env(
+    "FASTSALARY_ACCESS_KEY","cGtfQ0EyOUJCNTVCNDAwNkI3RDY5RDVGQUNGQkE5MzlFNEI6c2tfMzIwMDhhN2Y2MGEwZGJmYzk1MGUzMGNlMzQwN2Q3YzUzYzNjYWJmMWUyODNmMjc2NTcyYzMwOWU2ZmQwZDBkZg=="
+)
+FASTSALARY_SECRET_KEY = _env(
+    "FASTSALARY_SECRET_KEY","cGtfQ0EyOUJCNTVCNDAwNkI3RDY5RDVGQUNGQkE5MzlFNEI6c2tfMzIwMDhhN2Y2MGEwZGJmYzk1MGUzMGNlMzQwN2Q3YzUzYzNjYWJmMWUyODNmMjc2NTcyYzMwOWU2ZmQwZDBkZg=="
+)
+FASTSALARY_API_CREDENTIAL= _env("FASTSALARY_API_CREDENTIAL","")
+FASTSALARY_STATUS_API_URL = _env("FASTSALARY_STATUS_API_URL") or (
+    f"{FASTSALARY_BASE_URL}{FASTSALARY_STATUS_PATH}"
+)
+# Override if mf_lenders.id differs; otherwise script resolves by lender_name.
+FASTSALARY_LENDER_ID = _env("FASTSALARY_LENDER_ID",30)

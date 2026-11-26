@@ -182,6 +182,7 @@ RUPEEDHAN_STATUS_API_URL = _env("RUPEEDHAN_STATUS_API_URL") or (
     f"{RUPEEDHAN_BASE_URL}{RUPEEDHAN_STATUS_PATH}"
 )
 RUPEEDHAN_LENDER_ID = _env_int("RUPEEDHAN_LENDER_ID", 14)
+RUPEEDHAN_PARTNER_ID = _env("RUPEEDHAN_PARTNER_ID", "Profuse")
 
 # Turant Loan Lead Status API
 # POST /partner/check-lead-status — header: X-Api-Key

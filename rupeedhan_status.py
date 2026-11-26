@@ -28,6 +28,7 @@ from config import (
     RUPEEDHAN_BASE_URL,
     RUPEEDHAN_LENDER_ID,
     RUPEEDHAN_STATUS_API_URL,
+    RUPEEDHAN_PARTNER_ID,
     db_config,
 )
 from mf_disbursals_store import persist_lender_status_poll
@@ -66,6 +67,8 @@ def require_config():
         missing.append("RUPEEDHAN_STATUS_API_URL / RUPEEDHAN_BASE_URL")
     if not RUPEEDHAN_API_KEY:
         missing.append("RUPEEDHAN_API_KEY")
+    if not RUPEEDHAN_PARTNER_ID:
+        missing.append("RUPEEDHAN_PARTNER_ID")
     if missing:
         raise RuntimeError(
             "RupeeDhan config missing. Set in .env: " + ", ".join(missing)
@@ -112,7 +115,7 @@ def fetch_leads(include_all=False):
 
 
 def fetch_rupeedhan_status(mobile):
-    query = urllib.parse.urlencode({"mobile": mobile})
+    query = urllib.parse.urlencode({"mobile": mobile,"partner_id":RUPEEDHAN_PARTNER_ID})
     url = f"{RUPEEDHAN_STATUS_API_URL}?{query}"
     headers = {
         "Accept": "application/json",

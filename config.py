@@ -191,7 +191,7 @@ TURANT_BASE_URL = (
     _env("TURANT_BASE_URL") or "https://api.turantloan.com"
 ).rstrip("/")
 TURANT_API_KEY = _env("TURANT_API_KEY")
-TURANT_PARTNER_ID = _env("TURANT_PARTNER_ID", "Profuse")
+TURANT_PARTNER_ID = _env("TURANT_PARTNER_ID", "affpf")
 TURANT_STATUS_PATH = _env(
     "TURANT_STATUS_PATH",
     "/partner/check-lead-status",
